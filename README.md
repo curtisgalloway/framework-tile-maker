@@ -90,6 +90,11 @@ thin-feature and crop warnings.
   service. `--host` will bind wider, and warns you when you do.
 - The **use it** link next to the grid fills in the full 3 × 7 panel with the
   settings that suit it (margin 0, fit cover) in one click.
+- **Blank tiles are kept by default here**, unlike the CLI. Ask for 3 × 7 and
+  you get 21 tiles, including the cells the artwork never reaches — a panel
+  needs all of them to be physically complete. Untick the box for the CLI's
+  behavior of emitting only the tiles that carry artwork. Either way the page
+  reports the count, and says so in amber when cells were left out.
 
 ---
 

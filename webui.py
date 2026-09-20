@@ -92,7 +92,7 @@ def generate(
     layer: float = Form(0.2),
     invert: bool = Form(False),
     mirror: bool = Form(False),
-    keep_empty: bool = Form(False),
+    keep_empty: bool = Form(True),
 ):
     # The panel is 3x7; allow past that for oversized artwork, but keep it two
     # digits so a typo cannot ask for a million tiles and wedge the machine.
@@ -151,6 +151,11 @@ def generate(
 
     outs = sorted(p.name for p in (d / "out").iterdir() if p.is_file())
     preview = next((n for n in outs if n.endswith("_preview.png")), None)
+
+    # A cell the artwork does not reach is dropped unless --keep-empty, so a
+    # panel can come back with holes in it. That is easy to miss in a wall of
+    # filenames, so report the count explicitly and let the page say so.
+    skipped = log.count("no artwork in this cell, skipped")
     reap_old_jobs()
     return {
         "ok": True,
@@ -159,6 +164,9 @@ def generate(
         "command": command,
         "preview": preview,
         "files": [n for n in outs if n != preview],
+        "tiles": {"requested": cols * rows,
+                  "made": cols * rows - skipped,
+                  "skipped": skipped},
     }
 
 

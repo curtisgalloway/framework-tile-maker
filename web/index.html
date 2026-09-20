@@ -39,7 +39,8 @@
   .row { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
   .checks { display: flex; gap: 16px; flex-wrap: wrap; margin-bottom: 12px; }
   .checks label { display: flex; align-items: center; gap: 6px; margin: 0; }
-  .checks input { width: auto; }
+  .checks input, .check-wide input { width: auto; }
+  .check-wide { display: flex; align-items: center; gap: 6px; margin: 0 0 6px; }
   button {
     width: 100%; padding: 10px; border: 0; border-radius: 7px;
     background: var(--accent); color: #0d1017; font: 600 14px/1 inherit;
@@ -65,6 +66,8 @@
   .warn { color: var(--warn); }
   .bad { color: var(--bad); }
   .hint { color: var(--dim); font-size: 12px; margin: -6px 0 12px; }
+  .count { font-size: 13px; color: var(--dim); margin: 14px 0 0; }
+  .count.bad { color: var(--warn); }
   .link {
     width: auto; display: inline; background: none; border: 0; padding: 0;
     color: var(--accent); font: inherit; font-size: 12px; cursor: pointer;
@@ -122,8 +125,11 @@
     <div class="checks">
       <label><input type="checkbox" name="invert" value="true"> invert</label>
       <label><input type="checkbox" name="mirror" value="true"> mirror</label>
-      <label><input type="checkbox" name="keep_empty" value="true"> keep empty</label>
     </div>
+    <label class="check-wide"><input type="checkbox" name="keep_empty" value="true" checked>
+      blank tile for every empty cell</label>
+    <p class="hint">Off, cells the artwork never reaches are left out and the
+      panel comes back with holes in it.</p>
 
     <details>
       <summary>More options</summary>
@@ -202,13 +208,17 @@ f.addEventListener('submit', async (e) => {
   go.disabled = true;
   go.textContent = 'Generating…';
   files.innerHTML = '';
-  document.querySelectorAll('#pane details').forEach((d) => d.remove());
+  document.querySelectorAll('#pane details, #pane .count').forEach((d) => d.remove());
   img.hidden = true;
   empty.hidden = false;
   empty.textContent = 'Working…';
 
   try {
-    const res = await fetch('/generate', { method: 'POST', body: new FormData(f) });
+    const fd = new FormData(f);
+    for (const n of ['invert', 'mirror', 'keep_empty']) {
+      fd.set(n, f.elements.namedItem(n).checked ? 'true' : 'false');
+    }
+    const res = await fetch('/generate', { method: 'POST', body: fd });
     if (!res.ok) throw new Error((await res.json()).detail || res.statusText);
     const d = await res.json();
 
@@ -237,6 +247,16 @@ f.addEventListener('submit', async (e) => {
       a.download = n;
       return a;
     };
+    if (d.tiles) {
+      const t = document.createElement('p');
+      t.className = d.tiles.skipped ? 'count bad' : 'count';
+      t.textContent = d.tiles.skipped
+        ? `${d.tiles.made} of ${d.tiles.requested} tiles \u2014 ${d.tiles.skipped} cell(s) `
+          + `had no artwork and were left out. Tick "blank tile for every empty cell" `
+          + `to fill them in.`
+        : `${d.tiles.made} tile${d.tiles.made > 1 ? 's' : ''}`;
+      files.before(t);
+    }
     const main = d.files.filter((n) => n.endsWith('.3mf'));
     const parts = d.files.filter((n) => !n.endsWith('.3mf'));
 
