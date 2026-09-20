@@ -1,0 +1,3 @@
+[submodule "vendor/desktoptiles"]
+	path = vendor/desktoptiles
+	url = https://github.com/jermicide/desktoptiles.git

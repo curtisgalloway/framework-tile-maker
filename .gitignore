@@ -1,0 +1,7 @@
+out/
+__pycache__/
+*.pyc
+.DS_Store
+
+# local agent-harness marker, not part of the project
+.no-pitch

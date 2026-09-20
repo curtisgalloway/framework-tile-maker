@@ -1,0 +1,8 @@
+numpy
+trimesh
+manifold3d
+shapely
+svgelements
+opencv-python-headless
+pillow
+matplotlib
