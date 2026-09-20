@@ -94,6 +94,7 @@ def generate(
     mirror: bool = Form(False),
     keep_empty: bool = Form(True),
     embed_filaments: bool = Form(False),
+    set_body_color: bool = Form(False),
     body_color: str = Form(""),
     filament_type: str = Form("PLA"),
 ):
@@ -132,9 +133,12 @@ def generate(
         cmd.append("--keep-empty")
     if embed_filaments:
         cmd += ["--embed-filaments", "--filament-type", filament_type]
-        # Blank means "do not claim to know what spool is in slot 1"; tilegen
-        # then leaves that entry empty rather than inventing a color.
-        if body_color.strip():
+        # Slot 1 is set only when explicitly asked for. Otherwise tilegen
+        # leaves that entry empty rather than claiming to know which spool is
+        # loaded for the tile body.
+        if set_body_color:
+            if not body_color.strip():
+                raise HTTPException(400, "body color is on but no color was given")
             cmd += ["--body-color", body_color.strip()]
 
     r = subprocess.run(cmd, capture_output=True, text=True)

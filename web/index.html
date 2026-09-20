@@ -141,21 +141,25 @@
       them already assigned instead of bare slot numbers.</p>
 
     <div id="filopts" hidden>
-      <div class="row">
-        <label><span>Body color (filament 1)</span>
+      <label><span>Filament type</span>
+        <select name="filament_type">
+          <option>PLA</option><option>PETG</option><option>ABS</option>
+          <option>ASA</option><option>TPU</option><option>PC</option>
+          <option>PA</option><option>PLA-CF</option><option>PETG-CF</option>
+        </select></label>
+
+      <label class="check-wide"><input type="checkbox" name="set_body_color" value="true">
+        also set the body color (filament 1)</label>
+      <p class="hint">Filament 1 is whatever spool you load for the tile body.
+        Off, tilegen leaves that slot alone rather than claiming to know it.</p>
+
+      <div id="bodyopts" hidden>
+        <label><span>Body color</span>
           <span class="swatch">
             <input type="color" id="bodyswatch" value="#3c3c40" aria-label="pick body color">
-            <input name="body_color" id="bodycolor" placeholder="blank = leave unset">
+            <input name="body_color" id="bodycolor" value="#3c3c40">
           </span></label>
-        <label><span>Filament type</span>
-          <select name="filament_type">
-            <option>PLA</option><option>PETG</option><option>ABS</option>
-            <option>ASA</option><option>TPU</option><option>PC</option>
-            <option>PA</option><option>PLA-CF</option><option>PETG-CF</option>
-          </select></label>
       </div>
-      <p class="hint">Filament 1 is whatever spool you load for the tile body —
-        tilegen only knows it if you say. Leave blank and the slot stays unset.</p>
     </div>
 
     <details>
@@ -233,8 +237,11 @@ const embed = f.elements.namedItem('embed_filaments');
 const filopts = document.getElementById('filopts');
 embed.addEventListener('change', () => { filopts.hidden = !embed.checked; });
 
-// Keep the native picker and the text field in step, while still allowing a
-// blank text field to mean "leave slot 1 unset".
+const setBody = f.elements.namedItem('set_body_color');
+const bodyopts = document.getElementById('bodyopts');
+setBody.addEventListener('change', () => { bodyopts.hidden = !setBody.checked; });
+
+// Keep the native picker and the text field in step.
 const swatch = document.getElementById('bodyswatch');
 const bodycolor = document.getElementById('bodycolor');
 swatch.addEventListener('input', () => { bodycolor.value = swatch.value; });
@@ -258,7 +265,8 @@ f.addEventListener('submit', async (e) => {
 
   try {
     const fd = new FormData(f);
-    for (const n of ['invert', 'mirror', 'keep_empty', 'embed_filaments']) {
+    for (const n of ['invert', 'mirror', 'keep_empty', 'embed_filaments',
+                     'set_body_color']) {
       fd.set(n, f.elements.namedItem(n).checked ? 'true' : 'false');
     }
     const res = await fetch('/generate', { method: 'POST', body: fd });

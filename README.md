@@ -90,9 +90,10 @@ thin-feature and crop warnings.
   service. `--host` will bind wider, and warns you when you do.
 - The **use it** link next to the grid fills in the full 3 × 7 panel with the
   settings that suit it (margin 0, fit cover) in one click.
-- **set filament colors in the 3MF** reveals a body-color picker and a
-  filament-type list, matching `--embed-filaments`. Leave the color blank and
-  slot 1 stays unset — tilegen doesn't guess what spool you loaded.
+- **set filament colors in the 3MF** reveals a filament-type list and a
+  second checkbox, **also set the body color**, matching `--embed-filaments`
+  and `--body-color`. Leave that one off and slot 1 stays unset — tilegen
+  doesn't guess what spool you loaded.
 - **Blank tiles are kept by default here**, unlike the CLI. Ask for 3 × 7 and
   you get 21 tiles, including the cells the artwork never reaches — a panel
   needs all of them to be physically complete. Untick the box for the CLI's
