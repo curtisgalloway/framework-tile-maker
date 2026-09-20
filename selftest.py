@@ -1,4 +1,6 @@
 #!/usr/bin/env python3
+# SPDX-FileCopyrightText: 2026 Curtis Galloway
+# SPDX-License-Identifier: Apache-2.0
 """Regression checks for tilegen. Run: python3 selftest.py
 
 Each check has failed at least once during development, which is why it is here.
@@ -15,6 +17,35 @@ SVG = os.path.join(HERE, "examples", "fuchsia.svg")
 NS = {"c": "http://schemas.microsoft.com/3dmanufacturing/core/2015/02"}
 
 fails = []
+skipped = []
+
+
+def find_cairo():
+    """Put libcairo where cairocffi's ctypes lookup will find it.
+
+    cairosvg -> cairocffi -> ctypes.util.find_library("cairo"), which on macOS
+    searches only DYLD_*_LIBRARY_PATH, /usr/local/lib and /usr/lib.  Homebrew
+    on Apple silicon installs to /opt/homebrew/lib, which is on none of those,
+    so an installed cairo still fails to load.  find_library reads os.environ
+    at call time, so setting the fallback path here is enough -- but it has to
+    happen before cairosvg is imported.
+    """
+    import ctypes.util
+    if ctypes.util.find_library("cairo"):
+        return True
+    extra = [d for d in ("/opt/homebrew/lib", "/usr/local/lib", "/opt/local/lib")
+             if os.path.isdir(d)]
+    if not extra:
+        return False
+    cur = os.environ.get("DYLD_FALLBACK_LIBRARY_PATH", "")
+    os.environ["DYLD_FALLBACK_LIBRARY_PATH"] = os.pathsep.join(
+        [d for d in [cur, *extra] if d])
+    return bool(ctypes.util.find_library("cairo"))
+
+
+def skip(section, why):
+    print(f"  SKIP  {section} -- {why}")
+    skipped.append(section)
 
 
 def check(name, cond, detail=""):
@@ -75,61 +106,82 @@ print("\n3. cropping is reported when it is real")
 _, log = run("--margin", "2.5", "--scale", "130", "--no-stl", "--no-3mf", "--no-preview")
 check("overscale warns", "runs past the tile area" in log)
 
-print("\n4. orientation")
-# Section the finished ink just under the face and compare, as seen from -z,
-# against the source artwork. Catches an accidental mirror.
-import cairosvg
-from PIL import Image
-import matplotlib
-matplotlib.use("Agg")
-import matplotlib.pyplot as plt
-from matplotlib.patches import Polygon as MplPoly
-from shapely.geometry import Polygon
+def section_orientation():
+    """Section the finished ink just under the face and compare, as seen from
+    -z, against the source artwork.  Catches an accidental mirror.
 
-sys.path.insert(0, HERE)
-import tilegen as T
-
-N = 600
-png = cairosvg.svg2png(url=SVG, output_width=N, output_height=N, background_color="white")
-ref = np.array(Image.open(io.BytesIO(png)).convert("L")) < 128
-
-regs = T.load_svg(SVG)
-g2d = unary_union([r.geom for r in regs])
-world = T.to_world(g2d, mirror=False)
-
-
-def raster(geom, n=N, vb=512.0):
-    """Draw world-space geometry the way a viewer outside the case sees it.
-
-    Frame it to the SVG viewBox mapped through to_world (u,v in [0,vb] becomes
-    X,Y in [-vb,0]) so it lines up pixel-for-pixel with the cairosvg reference.
-    Viewer at -z: screen-right = -X (so xlim descends), screen-up = +Y.
+    cairosvg is the reference renderer on purpose: it parses the SVG entirely
+    independently of tilegen, so a shared bug cannot make both sides agree.
+    Rasterizing with tilegen's own load_svg would check the parser against
+    itself and pass no matter what it got wrong -- which is why this section
+    skips when cairo is missing instead of falling back to that.
     """
-    fig = plt.figure(figsize=(n / 100, n / 100), dpi=100)
-    ax = fig.add_axes([0, 0, 1, 1])
-    ax.set_xlim(0.0, -vb)      # left edge = X 0 = u 0
-    ax.set_ylim(-vb, 0.0)      # top edge  = Y 0 = v 0
-    ax.axis("off")
-    polys = [geom] if isinstance(geom, Polygon) else list(geom.geoms)
-    for p in polys:
-        ax.add_patch(MplPoly(np.array(p.exterior.coords), closed=True,
-                             facecolor="black", edgecolor="none"))
-        for r in p.interiors:
-            ax.add_patch(MplPoly(np.array(r.coords), closed=True,
-                                 facecolor="white", edgecolor="none"))
-    buf = io.BytesIO()
-    fig.savefig(buf, format="png", facecolor="white")
-    plt.close(fig)
-    return np.array(Image.open(buf).convert("L").resize((n, n))) < 128
+    import cairosvg
+
+    from PIL import Image
+    import matplotlib
+    matplotlib.use("Agg")
+    import matplotlib.pyplot as plt
+    from matplotlib.patches import Polygon as MplPoly
+    from shapely.geometry import Polygon
+
+    sys.path.insert(0, HERE)
+    import tilegen as T
+
+    N = 600
+    png = cairosvg.svg2png(url=SVG, output_width=N, output_height=N, background_color="white")
+    ref = np.array(Image.open(io.BytesIO(png)).convert("L")) < 128
+
+    regs = T.load_svg(SVG)
+    g2d = unary_union([r.geom for r in regs])
+    world = T.to_world(g2d, mirror=False)
 
 
-mine = raster(world)
-iou = (ref & mine).sum() / (ref | mine).sum()
-check("tile face matches the source SVG, not its mirror", iou > 0.97, f"IoU {iou:.4f}")
-flipped = mine[:, ::-1]
-check("mirrored version scores worse (test is actually sensitive)",
-      (ref & flipped).sum() / (ref | flipped).sum() < iou,
-      f"mirrored IoU {(ref&flipped).sum()/(ref|flipped).sum():.4f}")
+    def raster(geom, n=N, vb=512.0):
+        """Draw world-space geometry the way a viewer outside the case sees it.
+
+        Frame it to the SVG viewBox mapped through to_world (u,v in [0,vb] becomes
+        X,Y in [-vb,0]) so it lines up pixel-for-pixel with the cairosvg reference.
+        Viewer at -z: screen-right = -X (so xlim descends), screen-up = +Y.
+        """
+        fig = plt.figure(figsize=(n / 100, n / 100), dpi=100)
+        ax = fig.add_axes([0, 0, 1, 1])
+        ax.set_xlim(0.0, -vb)      # left edge = X 0 = u 0
+        ax.set_ylim(-vb, 0.0)      # top edge  = Y 0 = v 0
+        ax.axis("off")
+        polys = [geom] if isinstance(geom, Polygon) else list(geom.geoms)
+        for p in polys:
+            ax.add_patch(MplPoly(np.array(p.exterior.coords), closed=True,
+                                 facecolor="black", edgecolor="none"))
+            for r in p.interiors:
+                ax.add_patch(MplPoly(np.array(r.coords), closed=True,
+                                     facecolor="white", edgecolor="none"))
+        buf = io.BytesIO()
+        fig.savefig(buf, format="png", facecolor="white")
+        plt.close(fig)
+        return np.array(Image.open(buf).convert("L").resize((n, n))) < 128
+
+
+    mine = raster(world)
+    iou = (ref & mine).sum() / (ref | mine).sum()
+    check("tile face matches the source SVG, not its mirror", iou > 0.97, f"IoU {iou:.4f}")
+    flipped = mine[:, ::-1]
+    check("mirrored version scores worse (test is actually sensitive)",
+          (ref & flipped).sum() / (ref | flipped).sum() < iou,
+          f"mirrored IoU {(ref&flipped).sum()/(ref|flipped).sum():.4f}")
+
+
+
+print("\n4. orientation")
+if not find_cairo():
+    skip("4. orientation",
+         "libcairo not found (macOS: brew install cairo; "
+         "Debian/Ubuntu: apt install libcairo2)")
+else:
+    try:
+        section_orientation()
+    except ImportError as e:
+        skip("4. orientation", f"cairosvg unavailable: {e}")
 
 print("\n5. 3MF structure")
 out, _ = run("--margin", "2.5")
@@ -174,7 +226,9 @@ check("21 tiles emitted", len(cfg.findall("object")) == 21,
       f"{len(cfg.findall('object'))}")
 
 print()
+if skipped:
+    print(f"{len(skipped)} section(s) SKIPPED: " + ", ".join(skipped))
 if fails:
     print(f"{len(fails)} FAILED: " + ", ".join(fails))
     sys.exit(1)
-print("all checks passed")
+print("all checks passed" + (" (some sections skipped -- see above)" if skipped else ""))

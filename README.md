@@ -149,6 +149,48 @@ license alike.
 
 ---
 
+## Licensing
+
+Two licenses apply here, to different things. The short version: **the code is
+Apache 2.0, the tile geometry is CC BY-SA 4.0, and anything you print carries
+the CC BY-SA obligations.**
+
+| | License | Why |
+|---|---|---|
+| `tilegen.py`, `selftest.py` | Apache 2.0 | Original work, © 2026 Curtis Galloway |
+| `vendor/desktoptiles/` | CC BY-SA 4.0 | Marcin Raczkowski's repo, vendored as a submodule. Not ours, and not copied into this one |
+| `assets/tile_base.stl` | CC BY-SA 4.0 | A render *of* his `tile_base.scad`, so it inherits his license |
+| `examples/*.stl`, `examples/*.3mf` | CC BY-SA 4.0 | Same — they contain his tile body |
+| **Tiles you generate** | **CC BY-SA 4.0** | Every tile embeds his frame, hooks and constraints |
+
+### What that means in practice
+
+**Using the tool, keeping the tiles to yourself:** nothing to do.
+
+**Publishing or selling tiles you generated** — on Printables, MakerWorld, Etsy,
+anywhere: they are derivative works of `tile_base.scad`, so CC BY-SA 4.0
+requires you to
+
+1. credit **Marcin Raczkowski (Marmot.Tech)** and link
+   <https://github.com/jermicide/desktoptiles>,
+2. license the tiles themselves under CC BY-SA 4.0, and
+3. say the work was modified.
+
+Run `python3 tilegen.py --credits` for text you can paste.
+
+**Reusing tilegen's code** in your own project: Apache 2.0, so keep the notice
+and go ahead. Note that Apache 2.0 covers only the code — the moment your
+project renders a tile, the output is CC BY-SA again.
+
+**Why not one license for everything?** Apache 2.0 and CC BY-SA 4.0 are not
+compatible in either direction, so they cannot be merged — the tile base could
+not be relicensed Apache even in principle, since it isn't ours to relicense.
+Keeping them separate is what makes the boundary honest: the submodule means
+his file is never copied here, and the table above says exactly which artifacts
+inherit which terms. `NOTICE.md` records the same thing in one place.
+
+---
+
 ## Regenerating the tile base
 
 `assets/tile_base.stl` is a cached render of
@@ -161,6 +203,14 @@ python3 tilegen.py logo.svg --rebuild-base
 
 Neither OpenSCAD nor the submodule is needed otherwise — the cached mesh ships
 with the tool.
+
+`tilegen` asks OpenSCAD for the **CGAL** backend explicitly. OpenSCAD now
+defaults to the newer Manifold backend, which exports this model as 472 facets
+that do not close into a solid; the boolean stage then fails with *"Not all
+meshes are volumes!"*. CGAL produces the same solid — volumes agree to five
+decimal places — as a clean watertight 332-facet mesh. If a rebuild ever does
+come out non-watertight, `tilegen` says so and stops rather than emitting a
+broken tile.
 
 To move to a newer upstream tile base:
 

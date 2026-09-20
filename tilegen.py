@@ -1,4 +1,6 @@
 #!/usr/bin/env python3
+# SPDX-FileCopyrightText: 2026 Curtis Galloway
+# SPDX-License-Identifier: Apache-2.0
 """
 tilegen - turn any SVG or raster image into Framework Desktop front-panel tiles,
 split across a tile grid, as multi-colour parts ready to slice.
@@ -45,8 +47,11 @@ tile_base.scad  - Marcin Raczkowski (Marmot.Tech), CC BY-SA 4.0
 Panel pitch     - measured from FrameworkComputer/Framework-Desktop
                   Tiles/fw_desktop_front_cover.stl
 
-Because tile_base.scad is CC BY-SA 4.0, tiles produced by this tool are
-derivative works: if you publish them, credit Marmot.Tech and share alike.
+tilegen itself (tilegen.py, selftest.py) is Apache 2.0, (c) 2026 Curtis
+Galloway.  That covers the code only.  Because tile_base.scad is CC BY-SA 4.0,
+every tile this tool produces is a derivative work of it: if you publish or
+sell them, credit Marmot.Tech, say the work was modified, and license the
+tiles under CC BY-SA 4.0 as well.  See README.md -> "Licensing".
 """
 
 EPS = 0.05
@@ -694,6 +699,16 @@ def render_preview(out_png, regions, cols, rows, pitch, face, margin, title):
 # CLI
 # ============================================================================
 
+def _openscad_supports_backend(exe):
+    """True if this OpenSCAD accepts --backend (added alongside Manifold)."""
+    import subprocess
+    try:
+        h = subprocess.run([exe, "--help"], capture_output=True, text=True, timeout=30)
+    except (OSError, subprocess.SubprocessError):
+        return False
+    return "--backend" in (h.stdout + h.stderr)
+
+
 def ensure_base(scad, cached, force=False):
     import subprocess, shutil
     if cached.exists() and not force:
@@ -707,10 +722,27 @@ def ensure_base(scad, cached, force=False):
         raise SystemExit(f"{cached} missing and OpenSCAD not found. Install OpenSCAD "
                          f"or restore the cached base mesh.")
     cached.parent.mkdir(parents=True, exist_ok=True)
-    subprocess.run([exe, "-o", str(cached), "-D", 'tile_type="blank"',
-                    "-D", "$colorize_elements=false", str(scad)],
-                   check=True, capture_output=True)
-    return trimesh.load(str(cached))
+    # Render with CGAL, not the Manifold backend that OpenSCAD now defaults to.
+    # On the tile base Manifold exports 472 facets that do not close into a
+    # solid (the hook cut-outs come out with unmerged vertices); trimesh's
+    # boolean engine then refuses the mesh with "Not all meshes are volumes!".
+    # CGAL renders the same solid -- volume agrees to 5 decimal places -- as a
+    # clean watertight 332-facet mesh.
+    cmd = [exe, "-o", str(cached), "-D", 'tile_type="blank"',
+           "-D", "$colorize_elements=false"]
+    if _openscad_supports_backend(exe):
+        cmd.append("--backend=CGAL")
+    cmd.append(str(scad))
+    subprocess.run(cmd, check=True, capture_output=True)
+    mesh = trimesh.load(str(cached))
+    if not mesh.is_watertight:
+        raise SystemExit(
+            f"OpenSCAD rendered {cached} but the mesh is not watertight "
+            f"({len(mesh.faces)} faces), so the boolean stage would fail. "
+            f"This is an OpenSCAD export problem, not a tilegen one -- try a "
+            f"different OpenSCAD build, or restore the cached mesh with "
+            f"'git checkout -- {cached.name}'.")
+    return mesh
 
 
 def main(argv=None):
