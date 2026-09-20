@@ -307,6 +307,36 @@ _z = zipfile.ZipFile(os.path.join(_out, "bands_3x1.3mf"))
 check("no project_settings.config without the flag (default is unchanged)",
       "Metadata/project_settings.config" not in _z.namelist())
 
+print("\n8. tile bases")
+# Every base has to be a closed solid or the boolean stage cannot use it, and
+# body + ink has to reconstruct whichever base was chosen -- not just blank.
+sys.path.insert(0, HERE)
+import tilegen as _T
+
+for _name, _file in sorted(_T.BASES.items()):
+    _b = trimesh.load(os.path.join(HERE, "assets", _file))
+    check(f"{_name} base is watertight", _b.is_watertight,
+          f"vol {_b.volume:.2f}, {len(_b.faces)} faces")
+    check(f"{_name} base is 28.5 x 28.5 x 4.4 mm",
+          bool(np.allclose(_b.extents, [28.5, 28.5, 4.4], atol=0.02)),
+          str(_b.extents.round(3)))
+
+_out, _ = run("--margin", "2.5", "--base", "grid", "--no-3mf")
+_gb = trimesh.load(os.path.join(_out, "fuchsia_body.stl"))
+_gi = [trimesh.load(p) for p in glob.glob(os.path.join(_out, "fuchsia_ink_*.stl"))]
+_grid = trimesh.load(os.path.join(HERE, "assets", _T.BASES["grid"]))
+check("body + ink reconstruct the grid base",
+      abs(_grid.volume - (_gb.volume + sum(i.volume for i in _gi))) < 1e-3,
+      f"delta {abs(_grid.volume - (_gb.volume + sum(i.volume for i in _gi))):+.6f} mm3")
+
+_, _log = run("--margin", "2.5", "--base", "cross", "--no-stl", "--no-3mf",
+              "--no-preview")
+check("open-faced bases warn about fragmentation",
+      "open face" in _log and "fragment" in _log)
+_, _log = run("--margin", "2.5", "--base", "blank", "--no-stl", "--no-3mf",
+              "--no-preview")
+check("blank base does not warn", "open face" not in _log)
+
 print()
 if skipped:
     print(f"{len(skipped)} section(s) SKIPPED: " + ", ".join(skipped))

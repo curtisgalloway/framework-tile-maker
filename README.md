@@ -90,6 +90,8 @@ thin-feature and crop warnings.
   service. `--host` will bind wider, and warns you when you do.
 - The **use it** link next to the grid fills in the full 3 × 7 panel with the
   settings that suit it (margin 0, fit cover) in one click.
+- **Tile base** picks the same five bases as `--base`, and warns when you
+  choose an open-faced one.
 - **set filament colors in the 3MF** reveals a filament-type list and a
   second checkbox, **also set the body color**, matching `--embed-filaments`
   and `--body-color`. Leave that one off and slot 1 stays unset — tilegen
@@ -118,6 +120,13 @@ thin-feature and crop warnings.
 - `--margin` — keep-out from each tile edge. Use `0` for multi-tile artwork so
   it runs across the seams; use `2` or `3` for a single centered logo.
 - `--nozzle 0.4` — drives the thin-feature warnings.
+- `--base blank|horizontal|cross|grid|frame` — which tile base to carve into.
+  `blank` is the solid face and the default. The others have **open faces**:
+  artwork over an opening has no material to carve, so it does not print
+  there, and what remains is split into one fragment per opening (28 of them
+  for the example logo on `cross`). That is the effect you are asking for, but
+  fragments narrower than the mesh tolerance can come out non-watertight —
+  slice-check before a long print.
 - `--mirror` — only if you print the tile face-up. See *Orientation* below.
 - `--embed-filaments` — write the colors into the 3MF, so the slicer opens
   with them assigned instead of bare slot numbers. Ink colors come from the
@@ -237,6 +246,39 @@ not be relicensed Apache even in principle, since it isn't ours to relicense.
 Keeping them separate is what makes the boundary honest: the submodule means
 his file is never copied here, and the table above says exactly which artifacts
 inherit which terms. `NOTICE.md` records the same thing in one place.
+
+---
+
+## Tile bases
+
+| `--base` | Face | Volume |
+|---|---|---|
+| `blank` | solid | 1967.63 mm³ |
+| `grid` | crossed stripes | 1688.94 mm³ |
+| `cross` | diagonal stripes | 1451.97 mm³ |
+| `horizontal` | horizontal stripes | 1438.11 mm³ |
+| `frame` | none — border only | 1028.20 mm³ |
+
+All five are watertight closed solids, and `selftest.py` section 8 checks
+that, their dimensions, and that body + ink still reconstructs whichever base
+was chosen.
+
+They are built by `bases/tilegen_bases.scad`, which `include`s the vendored
+`tile_base.scad` unmodified and composes its modules — the extension point
+that file's own usage comment documents. Two things made a wrapper necessary
+rather than just passing `tile_type`:
+
+- **`tile_base.scad`'s own `crosshatch_fill` clips its stripes to exactly
+  `inner_size`**, the same square the frame's inner edge sits on. At angle 0
+  the stripes meet that edge squarely and the union is clean; at any other
+  angle the slanted ends graze the frame corners with zero-area contact and
+  OpenSCAD emits a non-manifold mesh — under *both* backends, at every hatch
+  angle and thickness tried. The wrapper runs the stripes past `inner_size` so
+  they meet the frame volumetrically.
+- **The hook cut-outs are themselves at 45° + 90n.** Stripes at 45° are
+  coplanar with the faces being subtracted, which is non-manifold again.
+  Measured watertight at 30° and 60°, non-manifold at 15°, 22.5°, 45° and
+  67.5°, so the stripe angle defaults to 30°.
 
 ---
 

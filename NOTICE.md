@@ -4,7 +4,8 @@
 
 Copyright 2026 Curtis Galloway
 Licensed under the Apache License, Version 2.0 -- see LICENSE.
-This covers `tilegen.py`, `selftest.py`, `webui.py` and `web/` only. Everything below is not ours
+This covers `tilegen.py`, `selftest.py`, `webui.py`, `web/` and
+`bases/tilegen_bases.scad` only. Everything below is not ours
 and carries different terms; README.md -> "Licensing" has the full breakdown.
 
 ## tile_base.scad (vendor/desktoptiles)
@@ -26,7 +27,7 @@ artwork to that base.
 Anything containing the tile body is a derivative of tile_base.scad and so is
 CC BY-SA 4.0, regardless of this project's own license. That includes:
 
-  - assets/tile_base.stl      (a cached render of his .scad)
+  - assets/tile_base*.stl     (cached renders built on his .scad)
   - examples/*.stl, *.3mf     (they contain his tile body)
   - every tile this tool generates
 

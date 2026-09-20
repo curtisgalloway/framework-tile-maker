@@ -37,6 +37,23 @@ PANEL_COLS  = 3         # tiles across the panel width
 PANEL_ROWS  = 7         # tiles down the panel height
 SAFE_DEPTH  = 1.60      # below this z the tile is solid across its full face
 
+# Tile bases, mapped to their cached render. They are produced by
+# bases/tilegen_bases.scad, which includes the vendored tile_base.scad
+# unmodified and composes its modules -- the extension point that file's own
+# usage comment documents. See that file for why the stripes are not simply
+# tile_base.scad's own crosshatch_fill.
+BASES = {
+    "blank":      "tile_base.stl",
+    "frame":      "tile_base_frame.stl",
+    "horizontal": "tile_base_horizontal.stl",
+    "cross":      "tile_base_cross.stl",
+    "grid":       "tile_base_grid.stl",
+}
+# Bases whose face is not solid. Artwork over an opening has no material to
+# carve, so it does not print there -- which is the point of these, but it
+# surprises people the first time.
+OPEN_FACE = {"frame", "horizontal", "cross", "grid"}
+
 CREDITS = """\
 tile_base.scad  - Marcin Raczkowski (Marmot.Tech), CC BY-SA 4.0
                   https://github.com/jermicide/desktoptiles
@@ -740,14 +757,14 @@ def _openscad_supports_backend(exe):
     return "--backend" in (h.stdout + h.stderr)
 
 
-def ensure_base(scad, cached, force=False):
+def ensure_base(scad, cached, force=False, tile_type="blank"):
     import subprocess, shutil
     if cached.exists() and not force:
         return trimesh.load(str(cached))
     if not scad.exists():
         raise SystemExit(
-            f"{scad} missing. The tile base is a git submodule; fetch it with:\n"
-            f"    git submodule update --init")
+            f"{scad} missing. It includes the tile base from a git submodule; "
+            f"fetch it with:\n    git submodule update --init")
     exe = shutil.which("openscad") or shutil.which("OpenSCAD")
     if not exe:
         raise SystemExit(f"{cached} missing and OpenSCAD not found. Install OpenSCAD "
@@ -759,7 +776,7 @@ def ensure_base(scad, cached, force=False):
     # boolean engine then refuses the mesh with "Not all meshes are volumes!".
     # CGAL renders the same solid -- volume agrees to 5 decimal places -- as a
     # clean watertight 332-facet mesh.
-    cmd = [exe, "-o", str(cached), "-D", 'tile_type="blank"',
+    cmd = [exe, "-o", str(cached), "-D", f'tg_base="{tile_type}"',
            "-D", "$colorize_elements=false"]
     if _openscad_supports_backend(exe):
         cmd.append("--backend=CGAL")
@@ -832,7 +849,11 @@ def main(argv=None):
     ap.add_argument("--plate-gap", type=float, default=4.0, help="gap between tiles on the plate")
     ap.add_argument("--plate-origin", type=float, nargs=2, default=(128.0, 128.0),
                     help="plate center for the 3MF (default 128 128, an A1/P1 bed)")
-    ap.add_argument("--rebuild-base", action="store_true", help="re-render tile_base.stl")
+    ap.add_argument("--base", choices=sorted(BASES), default="blank",
+                    help="which tile base to carve into (default: blank). "
+                         "frame/horizontal/cross/grid have open faces -- "
+                         "artwork over an opening has nothing to print into")
+    ap.add_argument("--rebuild-base", action="store_true", help="re-render the tile base")
     ap.add_argument("--credits", action="store_true", help="print attribution and exit")
     a = ap.parse_args(argv)
 
@@ -856,9 +877,9 @@ def main(argv=None):
     if not art.exists():
         raise SystemExit(f"no such file: {art}")
 
-    base = ensure_base(here / "vendor" / "desktoptiles" / "tile_base.scad",
-                       here / "assets" / "tile_base.stl",
-                       force=a.rebuild_base)
+    base = ensure_base(here / "bases" / "tilegen_bases.scad",
+                       here / "assets" / BASES[a.base],
+                       force=a.rebuild_base, tile_type=a.base)
 
     if art.suffix.lower() == ".svg":
         regions = load_svg(art, fill_rule=a.fill_rule)
@@ -912,7 +933,14 @@ def main(argv=None):
               f"round to {round(n_layers)*a.layer:.2f} mm for a clean color boundary")
 
     print(f"  {src}: {len(regions)} color region(s) -> {cols}x{rows} tile(s), "
-          f"{a.depth} mm deep")
+          f"{a.depth} mm deep, {a.base} base")
+    if a.base in OPEN_FACE:
+        print(f"  ! the {a.base} base has an open face. Artwork over an opening "
+              f"has no material to carve, so it does not print there, and what "
+              f"remains is split into one fragment per opening -- measured 28 "
+              f"fragments for the example logo on 'cross'. Fragments narrower "
+              f"than the mesh tolerance can come out non-watertight; slice-check "
+              f"before committing a long print, or use --base blank.")
 
     objects, made, kept_area = [], 0, 0.0
     gap = a.face + a.plate_gap
