@@ -14,6 +14,7 @@ python3 tilegen.py fuchsia.svg --margin 2.5
 ```
 
 Cloning fresh? Use `git clone --recurse-submodules` and skip the first line.
+Prefer a GUI? See **Web interface** below.
 
 That writes `out/fuchsia.3mf`. Open it in Bambu Studio, set filament 1 to the
 tile colour and filament 2 to the logo colour, slice. Nothing else to configure.
@@ -63,6 +64,32 @@ python3 tilegen.py artwork.png --grid 3x7 --fit cover --keep-empty
 ```bash
 python3 selftest.py     # 20 regression checks, ~20 s
 ```
+
+---
+
+## Web interface
+
+A local page for driving the tool when you want to see the panel before you
+commit to it. Same engine, same flags — it shells out to `tilegen.py` and shows
+you the command it ran, so anything you land on can be reproduced in a shell.
+
+```bash
+pip install -r requirements-web.txt
+python3 webui.py
+```
+
+Then open <http://127.0.0.1:8770>. Pick a file, set columns and rows, hit
+**Generate**: you get the panel preview, the `.3mf` to download, the individual
+part STLs behind a fold, and tilegen's console output including its
+thin-feature and crop warnings.
+
+- **`--port N`** if 8770 is taken. It checks the port first and tells you what
+  to do rather than binding somewhere you are not expecting.
+- **Loopback only by default.** There is no auth, no upload limit and no job
+  queue — it is a convenience wrapper for one person on one machine, not a
+  service. `--host` will bind wider, and warns you when you do.
+- The **use it** link next to the grid fills in the full 3 × 7 panel with the
+  settings that suit it (margin 0, fit cover) in one click.
 
 ---
 
@@ -157,7 +184,7 @@ the CC BY-SA obligations.**
 
 | | License | Why |
 |---|---|---|
-| `tilegen.py`, `selftest.py` | Apache 2.0 | Original work, © 2026 Curtis Galloway |
+| `tilegen.py`, `selftest.py`, `webui.py`, `web/` | Apache 2.0 | Original work, © 2026 Curtis Galloway |
 | `vendor/desktoptiles/` | CC BY-SA 4.0 | Marcin Raczkowski's repo, vendored as a submodule. Not ours, and not copied into this one |
 | `assets/tile_base.stl` | CC BY-SA 4.0 | A render *of* his `tile_base.scad`, so it inherits his license |
 | `examples/*.stl`, `examples/*.3mf` | CC BY-SA 4.0 | Same — they contain his tile body |

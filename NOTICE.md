@@ -4,7 +4,7 @@
 
 Copyright 2026 Curtis Galloway
 Licensed under the Apache License, Version 2.0 -- see LICENSE.
-This covers `tilegen.py` and `selftest.py` only. Everything below is not ours
+This covers `tilegen.py`, `selftest.py`, `webui.py` and `web/` only. Everything below is not ours
 and carries different terms; README.md -> "Licensing" has the full breakdown.
 
 ## tile_base.scad (vendor/desktoptiles)
