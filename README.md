@@ -30,7 +30,7 @@ Takes about 5 seconds. A full 21-tile panel takes about 4 seconds.
 | `NAME.3mf` | Both parts as one object, filaments already assigned. **Use this.** |
 | `NAME_body.stl` | Tile with the artwork pocketed out |
 | `NAME_ink_1_#RRGGBB.stl` | The insert that fills the pocket exactly |
-| `NAME_preview.png` | What the panel will look like, before you print |
+| `NAME_preview.png` | What the panel surface will look like, before you print |
 
 Body and inserts share the exact same boundary surface — no gap, no overlap.
 The two reconstruct the original tile to within 2 × 10⁻⁵ mm³.
@@ -248,6 +248,14 @@ his file is never copied here, and the table above says exactly which artifacts
 inherit which terms. `NOTICE.md` records the same thing in one place.
 
 ---
+
+## The preview shows the real surface
+
+`NAME_preview.png` is drawn from the actual base mesh, not a square: the face
+is sliced just above z=0, so the openings in `grid`, `cross`, `horizontal` and
+`frame` appear as openings, and artwork is clipped to the material that is
+really there. On an open-faced base you can see at a glance which parts of
+your artwork survive and which fall into a gap and never print.
 
 ## Tile bases
 

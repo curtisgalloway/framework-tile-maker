@@ -699,7 +699,61 @@ def display_color(rgb, bg=TILE_BG, target=3.0):
     return best
 
 
-def render_preview(out_png, regions, cols, rows, pitch, face, margin, title):
+def face_outline(base, z=0.02):
+    """The material actually present at the decorated face, in view space.
+
+    Sectioning the base just above z=0 is the only honest way to draw the
+    face: a blank tile is a full square, but the striped and frame bases are
+    not, and drawing a solid square for them previews a tile that will never
+    be printed.
+
+    Sliced with manifold rather than trimesh's section(): trimesh's
+    polygons_full needs rtree to nest multi-contour sections, which is a
+    dependency this tool does not otherwise carry -- and every base but blank
+    is multi-contour, so the feature would silently fall back to a square on
+    exactly the bases that need it. manifold is already a dependency.
+
+    Returns None if the slice yields nothing, so the caller can fall back.
+    """
+    from manifold3d import Manifold, Mesh
+
+    try:
+        mesh = Mesh(vert_properties=np.asarray(base.vertices, dtype=np.float32),
+                    tri_verts=np.asarray(base.faces, dtype=np.uint32))
+        rings = Manifold(mesh).slice(z).to_polygons()
+    except Exception:
+        return None
+    if not rings:
+        return None
+
+    # Clipper2 hands back outers wound one way and holes the other. Rebuild
+    # shapely polygons by signed area, then let unary_union of the outers
+    # minus the holes sort out the nesting.
+    outers, holes = [], []
+    for r in rings:
+        if len(r) < 3:
+            continue
+        poly = Polygon(r)
+        if not poly.is_valid:
+            poly = poly.buffer(0)
+        if poly.is_empty:
+            continue
+        (outers if _signed_area(r) > 0 else holes).append(poly)
+    if not outers:
+        outers, holes = holes, []
+    g = unary_union(outers)
+    if holes:
+        g = g.difference(unary_union(holes))
+    if g.is_empty:
+        return None
+    # Section geometry is tile XY (world). The face is seen from -z, where
+    # (u, v) = (-x, -y) -- the same 180 deg mapping to_world applies in
+    # reverse.
+    return affinity.scale(g, -1.0, -1.0, origin=(0, 0))
+
+
+def render_preview(out_png, regions, cols, rows, pitch, face, margin, title,
+                   base=None):
     import matplotlib
     matplotlib.use("Agg")
     import matplotlib.pyplot as plt
@@ -710,12 +764,31 @@ def render_preview(out_png, regions, cols, rows, pitch, face, margin, title):
     fig, ax = plt.subplots(figsize=(max(3.4, W / 11), max(3.4, H / 11 + 0.5)), dpi=190)
     ax.set_facecolor("#141416"); fig.patch.set_facecolor("#141416")
 
+    outline = face_outline(base) if base is not None else None
+
     for r in range(rows):
         for c in range(cols):
             uc = (c - (cols - 1) / 2) * pitch
             vc = (r - (rows - 1) / 2) * pitch
+            if outline is None:
+                ax.add_patch(Rectangle((uc - face / 2, vc - face / 2), face, face,
+                                       facecolor=bg, edgecolor="#0a0a0c", lw=1.0,
+                                       zorder=1))
+                continue
+            # The tile opening, so openings read as the case behind rather than
+            # as tile material.
             ax.add_patch(Rectangle((uc - face / 2, vc - face / 2), face, face,
-                                   facecolor=bg, edgecolor="#0a0a0c", lw=1.0, zorder=1))
+                                   facecolor="#0a0a0c", edgecolor="#0a0a0c",
+                                   lw=1.0, zorder=0.9))
+            for g in ([outline] if isinstance(outline, Polygon)
+                      else list(getattr(outline, "geoms", []))):
+                gg = affinity.translate(g, uc, vc)
+                ax.add_patch(MplPoly(np.array(gg.exterior.coords), closed=True,
+                                     facecolor=bg, edgecolor="none", zorder=1))
+                for ring in gg.interiors:
+                    ax.add_patch(MplPoly(np.array(ring.coords), closed=True,
+                                         facecolor="#0a0a0c", edgecolor="none",
+                                         zorder=1.05))
 
     def draw(g, color, z):
         polys = [g] if isinstance(g, Polygon) else list(getattr(g, "geoms", []))
@@ -740,6 +813,11 @@ def render_preview(out_png, regions, cols, rows, pitch, face, margin, title):
                 vc = (rr - (rows - 1) / 2) * pitch
                 cell = box(uc - half, vc - half, uc + half, vc + half)
                 g = r.geom.intersection(cell)
+                # Ink only exists where the base has material to carve. Without
+                # this the preview shows artwork floating over the openings of
+                # a striped base, which is exactly what will not print.
+                if outline is not None and not g.is_empty:
+                    g = g.intersection(affinity.translate(outline, uc, vc))
                 if not g.is_empty:
                     clipped.append(g)
         if clipped:
@@ -1041,7 +1119,8 @@ def main(argv=None):
     if not a.no_preview:
         png = outdir / f"{stem}_preview.png"
         render_preview(png, regions, cols, rows, a.pitch, a.face, a.margin,
-                       f"{stem}  -  {cols}x{rows}  -  as seen on the panel")
+                       f"{stem}  -  {cols}x{rows}  -  {a.base} base, as seen "
+                       f"on the panel", base=base)
         print(f"  = {png}")
     return 0
 

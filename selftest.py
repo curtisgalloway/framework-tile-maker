@@ -329,6 +329,19 @@ check("body + ink reconstruct the grid base",
       abs(_grid.volume - (_gb.volume + sum(i.volume for i in _gi))) < 1e-3,
       f"delta {abs(_grid.volume - (_gb.volume + sum(i.volume for i in _gi))):+.6f} mm3")
 
+# The preview has to show the base it was asked for. It used to draw a solid
+# square whatever the base was, which previews a tile that will never print.
+_areas = {}
+for _name, _file in sorted(_T.BASES.items()):
+    _o = _T.face_outline(trimesh.load(os.path.join(HERE, "assets", _file)))
+    check(f"{_name} face outline is derived from the mesh", _o is not None,
+          f"area {_o.area:.2f} mm2" if _o is not None else "None")
+    if _o is not None:
+        _areas[_name] = round(_o.area, 2)
+check("each base has a distinct face area (preview reflects the base)",
+      len(set(_areas.values())) == len(_areas), str(_areas))
+check("blank has the largest face", _areas.get("blank") == max(_areas.values()))
+
 _, _log = run("--margin", "2.5", "--base", "cross", "--no-stl", "--no-3mf",
               "--no-preview")
 check("open-faced bases warn about fragmentation",
