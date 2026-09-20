@@ -20,6 +20,64 @@ const log = (msg, cls = '') => {
 let baseManifold = null;
 let svgText = null;
 let lastFiles = [];
+let busy = false;
+
+/**
+ * Hand the browser a frame so queued DOM changes actually paint.
+ *
+ * Everything below this point is synchronous CPU work, and the main thread is
+ * the only thread it has. Setting a label and then meshing for seven seconds
+ * means the label is not painted until the meshing ends -- which is why the
+ * button appeared to do nothing at all when clicked. requestAnimationFrame
+ * gets us to just before a paint; the nested setTimeout returns control after
+ * it, so the next chunk of work starts on a screen that is already updated.
+ */
+function yieldToPaint() {
+  return new Promise((resolve) => {
+    let settled = false;
+    const finish = () => { if (!settled) { settled = true; resolve(); } };
+    // rAF lands us just before a paint, which is what we want when visible.
+    requestAnimationFrame(() => setTimeout(finish, 0));
+    // But rAF is PAUSED in a hidden or fully occluded tab, so on its own it
+    // hangs the whole run the moment you switch tabs. The timeout is the
+    // guarantee: yield either way, paint when there is someone to paint for.
+    setTimeout(finish, 50);
+  });
+}
+
+/**
+ * Yield only when there is someone to yield for.
+ *
+ * A hidden tab pauses rAF *and* clamps setTimeout to roughly once a second,
+ * so pausing once per tile there turns a 7 s panel into a 30 s one to update
+ * a progress bar nobody can see. When hidden, run flat out.
+ */
+function paintTick() {
+  if (document.visibilityState !== 'visible') return Promise.resolve();
+  return yieldToPaint();
+}
+
+function setBusy(on) {
+  busy = on;
+  const go = $('go');
+  go.disabled = on;
+  $('golabel').textContent = on ? 'Generating\u2026' : 'Generate';
+  const sp = go.querySelector('.spinner');
+  if (on && !sp) {
+    const el = document.createElement('span');
+    el.className = 'spinner';
+    go.prepend(el);
+  } else if (!on && sp) {
+    sp.remove();
+  }
+  $('progress').hidden = !on;
+  if (!on) progress(0, '');
+}
+
+function progress(frac, text) {
+  $('fill').style.width = `${Math.round(frac * 100)}%`;
+  $('phase').textContent = text;
+}
 
 async function loadBase() {
   const res = await fetch('../assets/tile_base.stl');
@@ -61,13 +119,19 @@ async function generate() {
   // leaves last run's downloads on the page. That showed up as 43 part files
   // for a 21-tile panel, which cannot happen (42 is the ceiling).
   $('parts')?.remove();
-  $('go').disabled = true;
-  $('go').textContent = 'Generating…';
+  setBusy(true);
+  progress(0, 'reading artwork…');
   const t0 = performance.now();
+  // Paint the busy state before the thread disappears into geometry.
+  await yieldToPaint();
 
   try {
     if (!svgText) throw new Error('pick an SVG first');
-    if (!baseManifold) baseManifold = await loadBase();
+    if (!baseManifold) {
+      progress(0.02, 'loading tile base\u2026');
+      await paintTick();
+      baseManifold = await loadBase();
+    }
 
     // The canvas size is known before parsing, so the SVG can be sampled at
     // a tolerance that means 0.02 mm on the finished tile rather than 0.02 of
@@ -75,6 +139,8 @@ async function generate() {
     const canvasMm = Math.hypot(
         (o.cols - 1) * o.pitch + o.face - 2 * o.margin,
         (o.rows - 1) * o.pitch + o.face - 2 * o.margin);
+    progress(0.06, 'parsing SVG\u2026');
+    await paintTick();
     const regions = loadSVG(svgText, {tolMm: o.tolMm, canvasMm});
     if (!regions.length) throw new Error('no filled artwork found in that file');
     log(`svg: ${regions.length} color region(s) -> ${o.cols}x${o.rows} tile(s), ` +
@@ -84,6 +150,8 @@ async function generate() {
           `the pocket may break into the hook cut-outs`, 'warn');
     }
 
+    progress(0.14, 'fitting artwork to the grid\u2026');
+    await paintTick();
     let secs = regions.map(regionToCrossSection);
     const {sections} = fitTransform(secs, o);
     secs.forEach((s) => s.delete());
@@ -102,9 +170,17 @@ async function generate() {
     const objects = [];
     const gap = o.face + 4.0;
     let made = 0, skipped = 0;
+    const total = o.cols * o.rows;
+    let done = 0;
 
     for (let r = 0; r < o.rows; r++) {
       for (let c = 0; c < o.cols; c++) {
+        // Tiles are the long pole, so this is where the bar has to move.
+        // 0.18..0.85 of the run, one repaint per tile.
+        progress(0.18 + 0.67 * (done / total),
+                 `tile ${done + 1} of ${total}\u2026`);
+        await paintTick();
+        done++;
         const tag = (o.cols === 1 && o.rows === 1) ? 'tile' : `tile_r${r}c${c}`;
         const inks = clipToTile(slots, c, r, o);
         const px = 128 + (c - (o.cols - 1) / 2) * gap;
@@ -148,6 +224,8 @@ async function generate() {
     const stem = ($('file').files[0]?.name || 'tilegen').replace(/\.svg$/i, '')
                      .replace(/\s+/g, '_');
     const name = made === 1 ? `${stem}.3mf` : `${stem}_${o.cols}x${o.rows}.3mf`;
+    progress(0.87, 'writing the 3MF\u2026');
+    await paintTick();
     const blob = await write3MF(objects, {title: stem, filaments});
     addFile(name, blob, true);
     log(`  = ${name}  (${made} object(s), filament 1 = body, 2+ = ink)`);
@@ -156,11 +234,14 @@ async function generate() {
           filaments.map((f, i) => `${i + 1}=${f.color || 'unset'}`).join(', '));
     }
 
+    progress(0.94, 'exporting part STLs\u2026');
+    await paintTick();
     for (const obj of objects) {
       for (const p of obj.parts) {
         addFile(`${obj.name}_${p.name}.stl`, exportSTL(p.mesh), false);
       }
     }
+    progress(1, 'done');
 
     drawPreview(slots, o);
     $('count').textContent = skipped
@@ -174,8 +255,7 @@ async function generate() {
     log(String(err && err.message || err), 'bad');
     console.error(err);
   } finally {
-    $('go').disabled = false;
-    $('go').textContent = 'Generate';
+    setBusy(false);
   }
 }
 
@@ -330,7 +410,9 @@ $('fullpanel').addEventListener('click', () => {
   $('cols').value = 3; $('rows').value = 7;
   $('margin').value = 0; $('fit').value = 'cover';
 });
-$('go').addEventListener('click', generate);
+// disabled alone is not quite enough: a double-click can land both events
+// before the first handler has run, so re-entry is refused explicitly too.
+$('go').addEventListener('click', () => { if (!busy) generate(); });
 
 initManifold().then(() => {
   $('status').textContent = 'manifold ready — everything runs in this tab';

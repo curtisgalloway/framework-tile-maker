@@ -33,8 +33,21 @@
           text-decoration:underline; }
   button { width:100%; padding:10px; border:0; border-radius:7px;
            background:var(--accent); color:#0d1017; font:600 14px/1 inherit;
-           cursor:pointer; }
-  button:disabled { opacity:.55; cursor:default; }
+           cursor:pointer; display:flex; align-items:center;
+           justify-content:center; gap:8px; }
+  button:disabled { opacity:.7; cursor:progress; }
+  /* transform-only animation, so it keeps turning on the compositor even
+     while the main thread is busy meshing */
+  .spinner { width:13px; height:13px; border-radius:50%; flex:0 0 auto;
+             border:2px solid rgba(13,16,23,.35); border-top-color:#0d1017;
+             animation:spin .7s linear infinite; }
+  @keyframes spin { to { transform:rotate(360deg); } }
+  #progress { margin:12px 0 0; }
+  #bar { height:6px; background:#101014; border:1px solid var(--line);
+         border-radius:99px; overflow:hidden; }
+  #fill { height:100%; width:0%; background:var(--accent);
+          transition:width .15s linear; }
+  #phase { color:var(--dim); font-size:12px; margin:6px 0 0; }
   .swatch { display:flex; gap:6px; align-items:center; }
   .swatch input[type=color] { width:34px; height:34px; padding:2px; flex:0 0 auto; }
   canvas { display:block; margin:0 auto; border-radius:8px; max-width:100%; }
@@ -100,7 +113,11 @@
       </div>
     </div>
 
-    <button id="go" disabled>Generate</button>
+    <button id="go" disabled><span id="golabel">Generate</span></button>
+    <div id="progress" hidden>
+      <div id="bar"><div id="fill"></div></div>
+      <p id="phase"></p>
+    </div>
   </div>
 
   <section>
@@ -114,4 +131,4 @@
   </section>
 </main>
 
-<script type="module" src="./src/app.js"></script>
+<script type="module" src="./src/app.js?v=5"></script>
