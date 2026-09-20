@@ -337,6 +337,60 @@ _, _log = run("--margin", "2.5", "--base", "blank", "--no-stl", "--no-3mf",
               "--no-preview")
 check("blank base does not warn", "open face" not in _log)
 
+print("\n9. raster input")
+# A photo fails in a way an SVG never does. Traced contours produce hundreds
+# of polygons that touch each other and carry interior rings, and
+# trimesh.creation.extrude_polygon returns non-volumes for some of those --
+# which surfaced only as "Not all meshes are volumes!" three stages later.
+# Seeded noise reproduces that geometry shape deterministically.
+sys.path.insert(0, HERE)
+import tilegen as _T2r
+_rng = np.random.default_rng(20260920)
+_noise = _rng.random((160, 160))
+_k = 9
+_sm = np.copy(_noise)
+for _ in range(3):                       # cheap blur -> blobby, holey regions
+    _sm = (_sm + np.roll(_sm, 1, 0) + np.roll(_sm, -1, 0)
+           + np.roll(_sm, 1, 1) + np.roll(_sm, -1, 1)) / 5.0
+_img = (_sm > _sm.mean()).astype(np.uint8) * 255
+_rgb = np.dstack([_img, _img, _img])
+_jpg = os.path.join(TMP, "noise.jpg")
+_Image.fromarray(_rgb).save(_jpg, quality=90)
+
+_out, _log = run_art(_jpg, "--margin", "2.5", "--colors", "2",
+                     "--background", "none")
+_body = trimesh.load(glob.glob(os.path.join(_out, "*_body.stl"))[0])
+_inks = [trimesh.load(p) for p in glob.glob(os.path.join(_out, "*_ink_*.stl"))]
+check("JPEG produces a body", _body.volume > 0, f"{_body.volume:.1f} mm3")
+check("JPEG produces ink parts", len(_inks) > 0, f"{len(_inks)} part(s)")
+# Watertightness is asserted on the meshes as built, not as reloaded. Blobby
+# artwork leaves fragments touching at single points; manifold keeps those as
+# separate shells, but any loader that merges coincident vertices welds them
+# into a non-manifold vertex. Reloading and asserting watertight would be
+# testing the loader's merge tolerance, not this tool. Volume is exact either
+# way, which is what the reconstruction check below pins down.
+_rr = _T2r.load_raster(_jpg, n_colors=2)
+_rr = _T2r.resolve_overlaps(_rr)
+_rr, _ = _T2r.fit_transform(_rr, 1, 1, _T2r.PITCH, _T2r.TILE, 2.5, 0,
+                            "contain", 0, 100, 0.02)
+_ii = _T2r.clip_to_tile(_rr, 0, 0, 1, 1, _T2r.PITCH, _T2r.TILE, 2.5)
+_wb, _wp = _T2r.build_tile(base, [_T2r.to_world(x.geom, False) for x in _ii], 0.6)
+check("as-built body is watertight", _wb.is_watertight,
+      f"{len(_wb.faces)} faces")
+check("as-built ink parts are watertight", all(m.is_watertight for m in _wp),
+      f"{len(_wp)} part(s)")
+check("body + ink reconstruct the base",
+      abs(base.volume - (_body.volume + sum(i.volume for i in _inks))) < 1e-3,
+      f"delta {abs(base.volume - (_body.volume + sum(i.volume for i in _inks))):+.6f} mm3")
+
+# The geometry has to be genuinely awkward or the test proves nothing.
+from shapely.geometry import Polygon as _Poly
+_g = _rr[0].geom
+_ps = [_g] if isinstance(_g, _Poly) else list(_g.geoms)
+_holed = sum(1 for p in _ps if len(p.interiors) > 0)
+check("the fixture really is awkward geometry", len(_ps) > 50 and _holed > 0,
+      f"{len(_ps)} polygons, {_holed} with holes")
+
 print()
 if skipped:
     print(f"{len(skipped)} section(s) SKIPPED: " + ", ".join(skipped))

@@ -435,20 +435,45 @@ def to_world(geom, mirror):
 # ============================================================================
 
 def extrude(geom, z0, z1):
-    polys = [geom] if isinstance(geom, Polygon) else list(geom.geoms)
-    meshes = []
+    """shapely 2D -> one closed solid between z0 and z1.
+
+    This goes through manifold's CrossSection rather than
+    trimesh.creation.extrude_polygon, because the latter is not robust enough
+    for traced raster contours. Measured on a photo quantized to two colors:
+    484 polygons, of which 15 extruded to something that was not a volume --
+    every one of them a polygon with interior rings, where the triangulation
+    failed to close. Nothing cheap repaired them: buffer(0), make_valid and
+    simplify fixed none, and dropping small holes fixed 8 of 15 only by
+    deleting 0.33 mm2 of real geometry.
+
+    CrossSection is Clipper2, which unions the contours as it builds -- so
+    polygons that merely touch (170 touching pairs in that same photo) stop
+    being a problem too, and there is no per-polygon concatenation left to go
+    wrong.
+
+    EvenOdd is the right rule for shapely input: exterior and interior ring
+    winding is not guaranteed, and even-odd nesting gives holes, and islands
+    inside holes, the correct fill either way.
+    """
+    from manifold3d import CrossSection, FillRule, Manifold
+
+    polys = [geom] if isinstance(geom, Polygon) else list(getattr(geom, "geoms", []))
+    contours = []
     for p in polys:
         if p.is_empty or p.area <= 1e-9:
             continue
-        try:
-            m = trimesh.creation.extrude_polygon(p, height=(z1 - z0))
-        except Exception:
-            m = trimesh.creation.extrude_polygon(p.buffer(0), height=(z1 - z0))
-        m.apply_translation([0, 0, z0])
-        meshes.append(m)
-    if not meshes:
+        contours.append(np.asarray(p.exterior.coords[:-1], dtype=np.float64))
+        for ring in p.interiors:
+            contours.append(np.asarray(ring.coords[:-1], dtype=np.float64))
+    contours = [c for c in contours if len(c) >= 3]
+    if not contours:
         return None
-    return trimesh.util.concatenate(meshes)
+
+    solid = Manifold.extrude(CrossSection(contours, FillRule.EvenOdd), z1 - z0)
+    solid = solid.translate((0.0, 0.0, z0))
+    m = solid.to_mesh()
+    return trimesh.Trimesh(vertices=np.asarray(m.vert_properties)[:, :3],
+                           faces=np.asarray(m.tri_verts), process=False)
 
 
 def boolean(op, meshes):
