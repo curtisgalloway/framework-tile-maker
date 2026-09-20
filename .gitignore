@@ -5,3 +5,6 @@ __pycache__/
 
 # local agent-harness marker, not part of the project
 .no-pitch
+
+# Bambu Studio's CLI drops this in the working directory
+result.json

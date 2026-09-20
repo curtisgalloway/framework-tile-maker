@@ -5,7 +5,7 @@
 
 Each check has failed at least once during development, which is why it is here.
 """
-import glob, io, os, subprocess, sys, tempfile, zipfile
+import glob, io, json, os, subprocess, sys, tempfile, zipfile
 import xml.etree.ElementTree as ET
 
 import numpy as np
@@ -224,6 +224,88 @@ z = zipfile.ZipFile(os.path.join(out, "fuchsia_3x7.3mf"))
 cfg = ET.fromstring(z.read("Metadata/model_settings.config"))
 check("21 tiles emitted", len(cfg.findall("object")) == 21,
       f"{len(cfg.findall('object'))}")
+
+print("\n7. multi-color filament mapping")
+# Three colors in three vertical bands across a 3x1 grid, so each tile sees
+# exactly one of them. Before the slot fix every tile numbered its inks from
+# scratch, so all three distinct colors came out as filament 2 and a
+# three-color panel sliced as one color with no warning anywhere.
+from PIL import Image as _Image
+
+_bands = os.path.join(TMP, "bands.png")
+_im = _Image.new("RGB", (900, 300))
+_px = _im.load()
+_cols = [(255, 0, 0), (0, 160, 0), (0, 0, 255)]
+for _x in range(900):
+    for _y in range(300):
+        _px[_x, _y] = _cols[min(2, _x // 300)]
+_im.save(_bands)
+
+
+def run_art(art, *args):
+    out = os.path.join(TMP, "a" + str(abs(hash((art, args))) % 10000))
+    r = subprocess.run([sys.executable, os.path.join(HERE, "tilegen.py"), art,
+                        "-o", out, *args], capture_output=True, text=True)
+    if r.returncode:
+        print(r.stdout, r.stderr)
+        raise SystemExit("tilegen failed")
+    return out, r.stdout
+
+
+_base_args = ("--grid", "3x1", "--colors", "3", "--margin", "0",
+              "--fit", "stretch", "--background", "none", "--no-stl")
+_out, _ = run_art(_bands, *_base_args)
+_z = zipfile.ZipFile(os.path.join(_out, "bands_3x1.3mf"))
+_cfg = ET.fromstring(_z.read("Metadata/model_settings.config"))
+
+_by_color = {}
+for _o in _cfg.findall("object"):
+    for _p in _o.findall("part"):
+        _md = {m.get("key"): m.get("value") for m in _p.findall("metadata")}
+        if _md["name"] != "body":
+            _by_color.setdefault(_md["name"].split("_")[-1], set()).add(_md["extruder"])
+
+check("each color maps to exactly one filament across tiles",
+      all(len(v) == 1 for v in _by_color.values()),
+      " ".join(f"{k}->{sorted(v)}" for k, v in sorted(_by_color.items())))
+check("distinct colors get distinct filaments",
+      len({tuple(v) for v in _by_color.values()}) == len(_by_color),
+      f"{len(_by_color)} colors")
+check("no color is assigned filament 1 (that is the body)",
+      all("1" not in v for v in _by_color.values()))
+
+_out, _log = run_art(_bands, *_base_args, "--embed-filaments",
+                     "--body-color", "2f2f31", "--filament-type", "PETG")
+_z = zipfile.ZipFile(os.path.join(_out, "bands_3x1.3mf"))
+check("project_settings.config written with --embed-filaments",
+      "Metadata/project_settings.config" in _z.namelist())
+_ps = json.loads(_z.read("Metadata/project_settings.config"))
+check("body color lands in filament slot 1",
+      _ps["filament_colour"][0] == "#2F2F31", _ps["filament_colour"][0])
+check("filament type recorded for every slot",
+      _ps["filament_type"] == ["PETG"] * len(_ps["filament_colour"]),
+      str(_ps["filament_type"]))
+
+# The color array is indexed from filament 1, so a part on extruder N must
+# find its own color at index N-1. This is the check that would catch an
+# off-by-one between the two files.
+_cfg = ET.fromstring(_z.read("Metadata/model_settings.config"))
+_aligned = True
+for _o in _cfg.findall("object"):
+    for _p in _o.findall("part"):
+        _md = {m.get("key"): m.get("value") for m in _p.findall("metadata")}
+        if _md["name"] == "body":
+            continue
+        _want = _md["name"].split("_")[-1].upper()
+        if _ps["filament_colour"][int(_md["extruder"]) - 1] != _want:
+            _aligned = False
+check("every part's extruder indexes its own color in filament_colour",
+      _aligned)
+
+_out, _ = run_art(_bands, *_base_args)
+_z = zipfile.ZipFile(os.path.join(_out, "bands_3x1.3mf"))
+check("no project_settings.config without the flag (default is unchanged)",
+      "Metadata/project_settings.config" not in _z.namelist())
 
 print()
 if skipped:

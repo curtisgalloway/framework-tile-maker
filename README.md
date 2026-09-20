@@ -1,6 +1,6 @@
 # tilegen
 
-Turn any SVG or image into Framework Desktop front-panel tiles, as multi-colour
+Turn any SVG or image into Framework Desktop front-panel tiles, as multi-color
 parts ready to slice. One tile or all 21, with artwork split across the grid.
 
 ---
@@ -17,7 +17,7 @@ Cloning fresh? Use `git clone --recurse-submodules` and skip the first line.
 Prefer a GUI? See **Web interface** below.
 
 That writes `out/fuchsia.3mf`. Open it in Bambu Studio, set filament 1 to the
-tile colour and filament 2 to the logo colour, slice. Nothing else to configure.
+tile color and filament 2 to the logo color, slice. Nothing else to configure.
 
 Takes about 5 seconds. A full 21-tile panel takes about 4 seconds.
 
@@ -49,7 +49,7 @@ python3 tilegen.py artwork.png --grid 3x7 --fit cover
 # A 2x2 block in the corner of the panel
 python3 tilegen.py logo.svg --grid 2x2 --fit contain
 
-# Photo in four colours
+# Photo in four colors
 python3 tilegen.py photo.jpg --grid 3x7 --colors 4 --fit cover
 
 # Deeper inlay for white-on-black, where 3 layers still shows through
@@ -90,6 +90,9 @@ thin-feature and crop warnings.
   service. `--host` will bind wider, and warns you when you do.
 - The **use it** link next to the grid fills in the full 3 × 7 panel with the
   settings that suit it (margin 0, fit cover) in one click.
+- **set filament colors in the 3MF** reveals a body-color picker and a
+  filament-type list, matching `--embed-filaments`. Leave the color blank and
+  slot 1 stays unset — tilegen doesn't guess what spool you loaded.
 - **Blank tiles are kept by default here**, unlike the CLI. Ask for 3 × 7 and
   you get 21 tiles, including the cells the artwork never reaches — a panel
   needs all of them to be physically complete. Untick the box for the CLI's
@@ -103,18 +106,24 @@ thin-feature and crop warnings.
 - `--depth 0.6` — inlay depth. 0.6 mm is 3 layers at 0.2 mm, opaque with most
   filaments. Past **1.6 mm** the pocket breaks into the retention hook cut-outs;
   the tool warns you.
-- `--background auto` — for images, the colour around the border becomes the
-  bare tile body instead of a printed colour. Saves a filament and all its
+- `--background auto` — for images, the color around the border becomes the
+  bare tile body instead of a printed color. Saves a filament and all its
   purge. `--background none` to print it anyway, or `--background '#ffffff'`
   to name it.
-- `--colors N` — how many colours to quantise an image to. Region 1 becomes
+- `--colors N` — how many colors to quantize an image to. Region 1 becomes
   filament 2, region 2 becomes filament 3, and so on.
 - `--fit contain | cover | stretch` — `contain` fits the whole artwork inside
   the grid, `cover` fills the grid and crops, `stretch` distorts to fit.
 - `--margin` — keep-out from each tile edge. Use `0` for multi-tile artwork so
-  it runs across the seams; use `2` or `3` for a single centred logo.
+  it runs across the seams; use `2` or `3` for a single centered logo.
 - `--nozzle 0.4` — drives the thin-feature warnings.
 - `--mirror` — only if you print the tile face-up. See *Orientation* below.
+- `--embed-filaments` — write the colors into the 3MF, so the slicer opens
+  with them assigned instead of bare slot numbers. Ink colors come from the
+  artwork. Pair with `--body-color '#2f2f31'` to name the spool you'll load
+  for the tile body (filament 1), and `--filament-type PETG` to record the
+  material. Off by default: it adds a `project_settings.config`, which is
+  project-scoped, so the default output stays exactly as it was.
 
 ---
 
@@ -122,10 +131,10 @@ thin-feature and crop warnings.
 
 - **Print face down.** The model already sits that way: the decorated face is
   at z=0, the retention hooks rise in +z. The artwork lands in the first few
-  layers against the build plate, which gives the crispest colour boundary and
+  layers against the build plate, which gives the crispest color boundary and
   a smooth finish.
-- **Two colours, two nozzles.** Assign body and ink to separate nozzles and the
-  H2D swaps without a purge tower. Three or more colours pulls from an AMS and
+- **Two colors, two nozzles.** Assign body and ink to separate nozzles and the
+  H2D swaps without a purge tower. Three or more colors pulls from an AMS and
   purges normally.
 - **Body is filament 1.** Inks are 2, 3, 4… in the order printed in the console.
 - The tile is 28.5 mm square; 21 of them fit a 256 mm plate in one go.
@@ -147,7 +156,14 @@ thin-feature and crop warnings.
   and screen-down is −Y. That makes the image-to-tile mapping a 180° rotation,
   not a mirror, so artwork is never reversed. Verified by sectioning the
   finished mesh and rendering it from outside.
-- **Fill rule.** SVG `fill-rule="nonzero"` is honoured by computing winding
+- **One color, one filament, across every tile.** A tile only carries the
+  colors whose artwork reaches it, so the filament slot has to be assigned
+  from the full color list before tiles are cut, not from what each tile
+  happens to contain. Numbering per tile makes three different colors all come
+  out as filament 2 and a three-color panel slices as one color, silently.
+  `selftest.py` section 7 prints three colored bands across a 3 × 1 grid and
+  asserts distinct colors get distinct filaments.
+- **Fill rule.** SVG `fill-rule="nonzero"` is honored by computing winding
   numbers, not approximated with even-odd. Get this wrong and counters — the
   inside of an "o", the eye of a spiral — fill in solid. Checked against a
   reference render at IoU 0.996.

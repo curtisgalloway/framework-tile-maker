@@ -93,6 +93,9 @@ def generate(
     invert: bool = Form(False),
     mirror: bool = Form(False),
     keep_empty: bool = Form(True),
+    embed_filaments: bool = Form(False),
+    body_color: str = Form(""),
+    filament_type: str = Form("PLA"),
 ):
     # The panel is 3x7; allow past that for oversized artwork, but keep it two
     # digits so a typo cannot ask for a million tiles and wedge the machine.
@@ -127,6 +130,12 @@ def generate(
         cmd.append("--mirror")
     if keep_empty:
         cmd.append("--keep-empty")
+    if embed_filaments:
+        cmd += ["--embed-filaments", "--filament-type", filament_type]
+        # Blank means "do not claim to know what spool is in slot 1"; tilegen
+        # then leaves that entry empty rather than inventing a color.
+        if body_color.strip():
+            cmd += ["--body-color", body_color.strip()]
 
     r = subprocess.run(cmd, capture_output=True, text=True)
     # tilegen prints absolute output paths, which here are inside a temp job

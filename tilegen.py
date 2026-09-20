@@ -3,14 +3,14 @@
 # SPDX-License-Identifier: Apache-2.0
 """
 tilegen - turn any SVG or raster image into Framework Desktop front-panel tiles,
-split across a tile grid, as multi-colour parts ready to slice.
+split across a tile grid, as multi-color parts ready to slice.
 
 The tile body geometry comes from tile_base.scad by Marcin Raczkowski (Marmot.Tech),
 CC BY-SA 4.0.  See README.md / --credits.  This tool only adds artwork to it.
 """
 from __future__ import annotations
 
-import argparse, math, os, sys, zipfile, colorsys
+import argparse, json, math, os, sys, zipfile, colorsys
 from dataclasses import dataclass, field
 from pathlib import Path as FsPath
 from xml.sax.saxutils import escape
@@ -31,7 +31,7 @@ from shapely import affinity
 # material at all across the grid, so the whole tile face is visible and
 # adjacent tiles meet with only a ~0.10-0.15 mm seam.
 # ----------------------------------------------------------------------------
-PITCH       = 28.60     # tile centre-to-centre, mm
+PITCH       = 28.60     # tile center-to-center, mm
 TILE        = 28.50     # printed tile outer size (tile_base.scad tile_size)
 PANEL_COLS  = 3         # tiles across the panel width
 PANEL_ROWS  = 7         # tiles down the panel height
@@ -63,11 +63,16 @@ EPS = 0.05
 
 @dataclass
 class Region:
-    """One colour's worth of artwork, in view space (u right, v down)."""
+    """One color's worth of artwork, in view space (u right, v down)."""
     name: str
     rgb: tuple
     geom: object
     order: int = 0
+    # Index of this color among all the artwork's colors, assigned once
+    # before tiles are cut and carried through clipping. The filament a part
+    # prints in is slot + 2, so it MUST be global: a per-tile index makes the
+    # same color print as filament 2 on one tile and filament 3 on the next.
+    slot: int = 0
 
 
 def _signed_area(ring):
@@ -184,7 +189,7 @@ def load_svg(path, tol=0.02, fill_rule=None):
 
 def load_raster(path, n_colors=2, threshold=None, min_area_px=8.0,
                 simplify_px=0.6, resample=1400):
-    """Quantise a raster to n colours and vectorise each colour's mask."""
+    """Quantise a raster to n colors and vectorise each color's mask."""
     import cv2
     from PIL import Image
 
@@ -212,12 +217,12 @@ def load_raster(path, n_colors=2, threshold=None, min_area_px=8.0,
     transparent = (alpha is not None) and (alpha < 128)
 
     if threshold is not None or n_colors == 2:
-        grey = np.array(im_rgb.convert("L"))
+        gray = np.array(im_rgb.convert("L"))
         if threshold is None:
-            t, _ = cv2.threshold(grey, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
+            t, _ = cv2.threshold(gray, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
         else:
             t = float(threshold)
-        labels = (grey > t).astype(np.int32)     # 1 = light, 0 = dark
+        labels = (gray > t).astype(np.int32)     # 1 = light, 0 = dark
         palette = []
         for k in (0, 1):
             m = labels == k
@@ -280,10 +285,10 @@ def _mask_to_geom(mask, min_area_px, simplify_px):
 # ============================================================================
 
 def pick_background(regions, mode="auto"):
-    """Decide which colour is 'the tile itself' rather than ink.
+    """Decide which color is 'the tile itself' rather than ink.
 
     An image's background should become the tile body: printing it as a second
-    filament covers the body completely, wastes a colour, and doubles purge.
+    filament covers the body completely, wastes a color, and doubles purge.
     auto = whichever region covers most of the artwork's outer border.
     """
     if mode == "none" or len(regions) < 2:
@@ -331,7 +336,7 @@ def resolve_overlaps(regions):
 
 def fit_transform(regions, cols, rows, pitch, face, margin, bleed, fit, rotate,
                   scale_pct, tol_mm=0.0):
-    """Map artwork into view-space millimetres, origin at panel centre.
+    """Map artwork into view-space millimeters, origin at panel center.
 
     View space: u right, v down -- the same handedness as the image, and the
     same as looking at the finished panel.
@@ -371,7 +376,7 @@ def fit_transform(regions, cols, rows, pitch, face, margin, bleed, fit, rotate,
         g = affinity.translate(g, -cx, -cy)
         g = affinity.scale(g, sx, sy, origin=(0, 0))
         if tol_mm > 0:
-            # Simplify in millimetres, not in artwork units. Curve flattening
+            # Simplify in millimeters, not in artwork units. Curve flattening
             # fine enough for a 512-unit viewBox is thousands of times finer
             # than a printer resolves, and every extra point becomes triangles.
             g2 = g.simplify(tol_mm, preserve_topology=True)
@@ -391,7 +396,7 @@ def clip_to_tile(regions, col, row, cols, rows, pitch, face, margin):
     for r in regions:
         g = affinity.translate(r.geom, -uc, -vc).intersection(cell)
         if not g.is_empty and g.area > 1e-6:
-            out.append(Region(r.name, r.rgb, g, r.order))
+            out.append(Region(r.name, r.rgb, g, r.order, r.slot))
     return out
 
 
@@ -434,7 +439,7 @@ def boolean(op, meshes):
 
 
 def build_tile(base, inks, depth):
-    """base minus all ink prisms, plus one solid per ink colour."""
+    """base minus all ink prisms, plus one solid per ink color."""
     cutters = []
     for g in inks:
         m = extrude(g, -EPS, depth)
@@ -475,7 +480,7 @@ def _thin_report(geom, w):
 
 def feature_report(ink, face, margin, nozzle):
     """Two failure modes, both worth catching before a 40 minute print:
-    ink strokes thinner than the nozzle, and body-coloured gaps thinner than
+    ink strokes thinner than the nozzle, and body-colored gaps thinner than
     the nozzle (which close up and blur the artwork)."""
     msgs = []
     la, ta, ln = _thin_report(ink, nozzle)
@@ -486,7 +491,7 @@ def feature_report(ink, face, margin, nozzle):
     gaps = box(-half, -half, half, half).difference(ink)
     lg, tg, gn = _thin_report(gaps, nozzle)
     if tg > 0 and lg / tg > 0.02:
-        msgs.append(f"{lg/tg*100:.0f}% of the body-colour gaps are thinner than "
+        msgs.append(f"{lg/tg*100:.0f}% of the body-color gaps are thinner than "
                     f"{nozzle} mm and will close up")
     return msgs
 
@@ -508,12 +513,26 @@ _RELS = """<?xml version="1.0" encoding="UTF-8"?>
 </Relationships>"""
 
 
-def write_3mf(path, objects, title="tilegen"):
+def norm_hex(c):
+    """'#abc' / 'abc' / '#AABBCC' -> '#AABBCC'. Raises ValueError otherwise."""
+    t = str(c).strip().lstrip("#")
+    if len(t) == 3:
+        t = "".join(ch * 2 for ch in t)
+    if len(t) != 6 or any(ch not in "0123456789abcdefABCDEF" for ch in t):
+        raise ValueError(f"not a hex color: {c!r}")
+    return "#" + t.upper()
+
+
+def write_3mf(path, objects, title="tilegen", filaments=None):
     """objects: list of (name, [(part_name, mesh, extruder), ...], (x, y)).
 
     Each object becomes one Bambu object made of parts; each part carries its
     own filament index.  IDs matter: <part id> must equal the mesh object's id
     or the slicer silently assigns the wrong filament.
+
+    filaments: optional [(color_or_None, type), ...] indexed from filament 1.
+    When given, a Metadata/project_settings.config is written so the slicer
+    opens with the colors already set instead of just numbered slots.
     """
     m, cfg = [], []
     m.append('<?xml version="1.0" encoding="UTF-8"?>')
@@ -582,6 +601,18 @@ def write_3mf(path, objects, title="tilegen"):
         z.writestr("_rels/.rels", _RELS)
         z.writestr("3D/3dmodel.model", "\n".join(m))
         z.writestr("Metadata/model_settings.config", "\n".join(cfg))
+        if filaments:
+            # Filament COLOR is project scope, not model scope: model_settings
+            # carries only the slot number ("this part is filament 2"), and
+            # there is no color key anywhere in it. Bambu accepts a
+            # project_settings.config holding just these two arrays -- it does
+            # not need the ~557 keys a slicer-saved project writes.
+            # "filament_colour" is Bambu's spelling of their own key. It is
+            # wire format, not prose -- do not Americanize it.
+            z.writestr("Metadata/project_settings.config", json.dumps({
+                "filament_colour": [c or "" for c, _ in filaments],
+                "filament_type": [t for _, t in filaments],
+            }, indent=2))
 
 
 # ============================================================================
@@ -609,7 +640,7 @@ def display_color(rgb, bg=TILE_BG, target=3.0):
     """Keep the artwork's hue but push lightness until it is clearly visible.
 
     Only lightness moves, so hue relationships between regions survive -- which
-    matters for anyone reading the preview without full colour discrimination.
+    matters for anyone reading the preview without full color discrimination.
     Distinguishing regions never depends on telling red from green.
     """
     if _contrast(rgb, bg) >= target:
@@ -749,7 +780,7 @@ def main(argv=None):
     here = FsPath(__file__).resolve().parent
     ap = argparse.ArgumentParser(
         prog="tilegen",
-        description="Framework Desktop tiles from any SVG or image, as multi-colour parts.",
+        description="Framework Desktop tiles from any SVG or image, as multi-color parts.",
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog=CREDITS)
     ap.add_argument("art", nargs="?", help="SVG, PNG, JPG or WEBP")
@@ -759,7 +790,7 @@ def main(argv=None):
     ap.add_argument("--depth", type=float, default=0.6,
                     help="inlay depth in mm (default 0.6 = 3 layers at 0.2)")
     ap.add_argument("--colors", type=int, default=2,
-                    help="colours to quantise a raster to (default 2)")
+                    help="colors to quantize a raster to (default 2)")
     ap.add_argument("--threshold", type=float, default=None,
                     help="raster: fixed 0-255 threshold instead of Otsu")
     ap.add_argument("--fit", choices=["contain", "cover", "stretch"], default="contain")
@@ -772,7 +803,7 @@ def main(argv=None):
     ap.add_argument("--fill-rule", choices=["nonzero", "evenodd"], default=None,
                     help="override the SVG's own fill-rule")
     ap.add_argument("--background", default="auto",
-                    help="which colour becomes the bare tile body: auto (default), "
+                    help="which color becomes the bare tile body: auto (default), "
                          "none, a region index, or #RRGGBB")
     ap.add_argument("--keep-empty", action="store_true",
                     help="still emit a blank tile for grid cells with no artwork")
@@ -786,12 +817,21 @@ def main(argv=None):
     ap.add_argument("--layer", type=float, default=0.2, help="layer height, for depth advice")
     ap.add_argument("--pitch", type=float, default=PITCH, help=f"tile pitch (default {PITCH})")
     ap.add_argument("--face", type=float, default=TILE, help=f"tile face size (default {TILE})")
+    ap.add_argument("--embed-filaments", action="store_true",
+                    help="write filament colors into the 3MF so the slicer "
+                         "opens with them already assigned")
+    ap.add_argument("--body-color", default=None, metavar="HEX",
+                    help="color of filament 1, the tile body, for "
+                         "--embed-filaments (default: left unset)")
+    ap.add_argument("--filament-type", default="PLA", metavar="TYPE",
+                    help="filament type recorded for every slot with "
+                         "--embed-filaments (default: PLA)")
     ap.add_argument("--no-3mf", action="store_true", help="skip the 3MF, emit STLs only")
     ap.add_argument("--no-stl", action="store_true", help="skip per-part STLs")
     ap.add_argument("--no-preview", action="store_true")
     ap.add_argument("--plate-gap", type=float, default=4.0, help="gap between tiles on the plate")
     ap.add_argument("--plate-origin", type=float, nargs=2, default=(128.0, 128.0),
-                    help="plate centre for the 3MF (default 128 128, an A1/P1 bed)")
+                    help="plate center for the 3MF (default 128 128, an A1/P1 bed)")
     ap.add_argument("--rebuild-base", action="store_true", help="re-render tile_base.stl")
     ap.add_argument("--credits", action="store_true", help="print attribution and exit")
     a = ap.parse_args(argv)
@@ -805,6 +845,12 @@ def main(argv=None):
         cols, rows = (int(x) for x in a.grid.lower().split("x"))
     except Exception:
         ap.error("--grid must look like 3x7")
+
+    if a.body_color:
+        try:
+            a.body_color = norm_hex(a.body_color)
+        except ValueError as e:
+            ap.error(str(e))
 
     art = FsPath(a.art)
     if not art.exists():
@@ -840,13 +886,19 @@ def main(argv=None):
         regions = [Region("inverted", (255, 255, 255), frame.difference(u), 0)]
 
     # drop the largest region when it is a full-bleed background: printing the
-    # whole face in a second colour is just a differently coloured tile.
+    # whole face in a second color is just a differently colored tile.
     regions, (canvas_w, canvas_h) = fit_transform(
         regions, cols, rows, a.pitch, a.face, a.margin, a.bleed,
         a.fit, a.rotate, a.scale, a.tolerance)
     canvas = box(-canvas_w / 2, -canvas_h / 2, canvas_w / 2, canvas_h / 2)
     placed_area = sum(r.geom.area for r in regions)
     outside_area = sum(r.geom.difference(canvas).area for r in regions)
+
+    # Pin each color to a filament slot now, while the full set is still in
+    # hand. After this point regions get clipped per tile and any tile may see
+    # only a subset.
+    for _i, _r in enumerate(regions):
+        _r.slot = _i
 
     outdir = FsPath(a.out); outdir.mkdir(parents=True, exist_ok=True)
     stem = art.stem.replace(" ", "_")
@@ -857,9 +909,9 @@ def main(argv=None):
     n_layers = a.depth / a.layer
     if abs(n_layers - round(n_layers)) > 1e-6:
         print(f"  ! depth {a.depth} mm is {n_layers:.2f} layers at {a.layer} mm; "
-              f"round to {round(n_layers)*a.layer:.2f} mm for a clean colour boundary")
+              f"round to {round(n_layers)*a.layer:.2f} mm for a clean color boundary")
 
-    print(f"  {src}: {len(regions)} colour region(s) -> {cols}x{rows} tile(s), "
+    print(f"  {src}: {len(regions)} color region(s) -> {cols}x{rows} tile(s), "
           f"{a.depth} mm deep")
 
     objects, made, kept_area = [], 0, 0.0
@@ -889,8 +941,8 @@ def main(argv=None):
                 print(f"      ! {msg}")
 
             plist = [("body", body, 1)]
-            for i, (p, reg) in enumerate(zip(parts, inks)):
-                plist.append((f"ink_{i+1}_{reg.name}", p, i + 2))
+            for p, reg in zip(parts, inks):
+                plist.append((f"ink_{reg.slot+1}_{reg.name}", p, reg.slot + 2))
             if not a.no_stl:
                 body.export(outdir / f"{tag}_body.stl")
                 for nm, mesh, _ in plist[1:]:
@@ -918,8 +970,20 @@ def main(argv=None):
 
     if not a.no_3mf:
         name = f"{stem}.3mf" if made == 1 else f"{stem}_{cols}x{rows}.3mf"
-        write_3mf(outdir / name, objects, title=stem)
+        filaments = None
+        if a.embed_filaments:
+            # Slot 1 is the body, whose color is whatever spool you load, so
+            # it stays blank unless named. Slots 2+ follow region slot order,
+            # which is exactly what the parts were assigned above.
+            cols_hex = [a.body_color] + ["#%02x%02x%02x" % r.rgb for r in regions]
+            filaments = [(norm_hex(c) if c else None, a.filament_type)
+                         for c in cols_hex]
+        write_3mf(outdir / name, objects, title=stem, filaments=filaments)
         print(f"  = {outdir/name}  ({made} object(s), filament 1 = body, 2+ = ink)")
+        if filaments:
+            shown = ", ".join(f"{i+1}={c or 'unset'}"
+                              for i, (c, _) in enumerate(filaments))
+            print(f"      filaments embedded ({a.filament_type}): {shown}")
 
     if not a.no_preview:
         png = outdir / f"{stem}_preview.png"
