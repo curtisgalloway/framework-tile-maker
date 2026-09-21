@@ -1,6 +1,0 @@
-# Web UI only (webui.py). The CLI needs none of these.
-#   pip install -r requirements.txt -r requirements-web.txt
-#   python3 webui.py
-fastapi
-uvicorn
-python-multipart

@@ -29,7 +29,7 @@ Measured against the Python on `examples/fuchsia.svg`, one tile, margin 2.5:
 | 3MF entries / objects / extruders | 4 / 3 / 1,2 | 4 / 3 / 1,2 |
 
 The reconstruction figure is the one that matters, and it is identical to the
-Python's to every digit `selftest.py` prints. The volume deltas are curve
+the Python's to every digit its suite printed. The volume deltas are curve
 flattening — the browser samples paths through `getPointAtLength`, svgelements
 computes them analytically — and 0.02% is orders of magnitude below what a
 0.4 mm nozzle resolves.
@@ -45,7 +45,7 @@ Two things carry it:
   `manifold-3d` on npm are the same C++ project, so the mesh booleans are not
   a reimplementation, they are the same code.
 - **`CrossSection` is Clipper2 with fill rules built in.** That replaces both
-  shapely *and* tilegen.py's hand-rolled nonzero winding-number partition —
+  shapely *and* a hand-rolled nonzero winding-number partition —
   `new CrossSection(contours, 'NonZero')` is the whole of it.
 
 The browser itself replaces svgelements: every shape is an
@@ -84,8 +84,8 @@ warn at all. On a 3x7 panel at 0.4 mm both emit exactly one warning.
 
 ## Tests
 
-`python3 webjs/tests/run.py` runs 48 differential checks in headless Chrome
-against numbers derived from `tilegen.py`. See `webjs/tests/README.md`.
+`python3 webjs/tests/run.py` runs 48 checks in headless Chrome against the
+real modules. See `webjs/tests/README.md`.
 
 It earned its place on the first run by catching a real bug: `resolveOverlaps`
 had never been ported, so quantized raster regions overlapped on their shared

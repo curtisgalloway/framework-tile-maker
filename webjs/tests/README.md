@@ -5,14 +5,14 @@ SPDX-License-Identifier: Apache-2.0
 
 # Browser tests
 
-Differential tests: the browser modules run for real, and their numbers are
-compared against `tilegen.py`, which stays the reference.
+48 regression checks. The browser modules run for real in headless Chrome.
 
 ```bash
-python3 webjs/tests/run.py              # 48 checks, non-zero exit on failure
+python3 webjs/tests/run.py              # non-zero exit on failure
 python3 webjs/tests/run.py --headed     # watch it in a visible browser
-python3 webjs/tests/run.py --update     # regenerate expected.json from tilegen.py
 ```
+
+stdlib only — no pip install, no npm.
 
 Open `/webjs/tests/` in any browser to run the same suite by hand.
 
@@ -24,12 +24,19 @@ jsdom implements neither, so headless Chrome is the only honest harness. The
 runner starts a static server, launches Chrome, and the page POSTs its results
 back; stdlib only, no npm.
 
-## Why expectations are recorded, not recomputed
+## expected.json is a frozen snapshot
 
-`expected.json` is generated from `tilegen.py` by `--update`. Recomputing on
-every run would mean a failure could be the browser changing *or* a dependency
-changing underneath the Python. Recording them makes a failure mean the browser
-moved, and `--update` is there for when the Python legitimately does.
+These were derived from the Python reference implementation that used to live
+in this repo, and were correct against it when recorded. That implementation
+has been removed, so they are now **golden values**: a failure means the
+browser's behaviour changed, which is what a regression suite is for — but no
+longer that it disagrees with an independent implementation.
+
+Several checks never needed the reference and are the stronger ones: body+ink
+reconstructing the base to 0.00002 mm³, watertightness, distinct filament slots
+per colour, and whether the thin-feature warnings fire. Those are invariants,
+and they would catch a real geometry regression with every recorded number
+deleted. It is the per-tile volume comparisons that lost their independence.
 
 ## Tolerances, and why they differ
 
@@ -38,7 +45,7 @@ moved, and `--update` is there for when the Python legitimately does.
 | single tile, SVG | 0.05 mm³ | same kernel, same contours; agrees to ~0.02 |
 | reconstruction | 0.001 mm³ | exact: a boolean partition cannot drift |
 | 3×7 panel | 0.15 mm³ | flattening error scales with artwork size |
-| raster, smooth | 1% | different tracers; measures 0.03% |
+| raster, smooth | 1% | recorded against a different tracer; measures 0.03% |
 | raster, noise | 8% | see below |
 
 The noise fixture is 160 px of high-frequency speckle. Every blob is a few

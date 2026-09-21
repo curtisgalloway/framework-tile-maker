@@ -8,3 +8,7 @@ __pycache__/
 
 # Bambu Studio's CLI drops this in the working directory
 result.json
+
+# oxbox review audit trail: keep on disk, out of history
+logs/
+.oxbox-review/
