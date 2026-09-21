@@ -37,6 +37,23 @@ PANEL_COLS  = 3         # tiles across the panel width
 PANEL_ROWS  = 7         # tiles down the panel height
 SAFE_DEPTH  = 1.60      # below this z the tile is solid across its full face
 
+# Tile bases, mapped to their cached render. They are produced by
+# bases/tilegen_bases.scad, which includes the vendored tile_base.scad
+# unmodified and composes its modules -- the extension point that file's own
+# usage comment documents. See that file for why the stripes are not simply
+# tile_base.scad's own crosshatch_fill.
+BASES = {
+    "blank":      "tile_base.stl",
+    "frame":      "tile_base_frame.stl",
+    "horizontal": "tile_base_horizontal.stl",
+    "cross":      "tile_base_cross.stl",
+    "grid":       "tile_base_grid.stl",
+}
+# Bases whose face is not solid. Artwork over an opening has no material to
+# carve, so it does not print there -- which is the point of these, but it
+# surprises people the first time.
+OPEN_FACE = {"frame", "horizontal", "cross", "grid"}
+
 CREDITS = """\
 tile_base.scad  - Marcin Raczkowski (Marmot.Tech), CC BY-SA 4.0
                   https://github.com/jermicide/desktoptiles
@@ -418,20 +435,45 @@ def to_world(geom, mirror):
 # ============================================================================
 
 def extrude(geom, z0, z1):
-    polys = [geom] if isinstance(geom, Polygon) else list(geom.geoms)
-    meshes = []
+    """shapely 2D -> one closed solid between z0 and z1.
+
+    This goes through manifold's CrossSection rather than
+    trimesh.creation.extrude_polygon, because the latter is not robust enough
+    for traced raster contours. Measured on a photo quantized to two colors:
+    484 polygons, of which 15 extruded to something that was not a volume --
+    every one of them a polygon with interior rings, where the triangulation
+    failed to close. Nothing cheap repaired them: buffer(0), make_valid and
+    simplify fixed none, and dropping small holes fixed 8 of 15 only by
+    deleting 0.33 mm2 of real geometry.
+
+    CrossSection is Clipper2, which unions the contours as it builds -- so
+    polygons that merely touch (170 touching pairs in that same photo) stop
+    being a problem too, and there is no per-polygon concatenation left to go
+    wrong.
+
+    EvenOdd is the right rule for shapely input: exterior and interior ring
+    winding is not guaranteed, and even-odd nesting gives holes, and islands
+    inside holes, the correct fill either way.
+    """
+    from manifold3d import CrossSection, FillRule, Manifold
+
+    polys = [geom] if isinstance(geom, Polygon) else list(getattr(geom, "geoms", []))
+    contours = []
     for p in polys:
         if p.is_empty or p.area <= 1e-9:
             continue
-        try:
-            m = trimesh.creation.extrude_polygon(p, height=(z1 - z0))
-        except Exception:
-            m = trimesh.creation.extrude_polygon(p.buffer(0), height=(z1 - z0))
-        m.apply_translation([0, 0, z0])
-        meshes.append(m)
-    if not meshes:
+        contours.append(np.asarray(p.exterior.coords[:-1], dtype=np.float64))
+        for ring in p.interiors:
+            contours.append(np.asarray(ring.coords[:-1], dtype=np.float64))
+    contours = [c for c in contours if len(c) >= 3]
+    if not contours:
         return None
-    return trimesh.util.concatenate(meshes)
+
+    solid = Manifold.extrude(CrossSection(contours, FillRule.EvenOdd), z1 - z0)
+    solid = solid.translate((0.0, 0.0, z0))
+    m = solid.to_mesh()
+    return trimesh.Trimesh(vertices=np.asarray(m.vert_properties)[:, :3],
+                           faces=np.asarray(m.tri_verts), process=False)
 
 
 def boolean(op, meshes):
@@ -657,7 +699,61 @@ def display_color(rgb, bg=TILE_BG, target=3.0):
     return best
 
 
-def render_preview(out_png, regions, cols, rows, pitch, face, margin, title):
+def face_outline(base, z=0.02):
+    """The material actually present at the decorated face, in view space.
+
+    Sectioning the base just above z=0 is the only honest way to draw the
+    face: a blank tile is a full square, but the striped and frame bases are
+    not, and drawing a solid square for them previews a tile that will never
+    be printed.
+
+    Sliced with manifold rather than trimesh's section(): trimesh's
+    polygons_full needs rtree to nest multi-contour sections, which is a
+    dependency this tool does not otherwise carry -- and every base but blank
+    is multi-contour, so the feature would silently fall back to a square on
+    exactly the bases that need it. manifold is already a dependency.
+
+    Returns None if the slice yields nothing, so the caller can fall back.
+    """
+    from manifold3d import Manifold, Mesh
+
+    try:
+        mesh = Mesh(vert_properties=np.asarray(base.vertices, dtype=np.float32),
+                    tri_verts=np.asarray(base.faces, dtype=np.uint32))
+        rings = Manifold(mesh).slice(z).to_polygons()
+    except Exception:
+        return None
+    if not rings:
+        return None
+
+    # Clipper2 hands back outers wound one way and holes the other. Rebuild
+    # shapely polygons by signed area, then let unary_union of the outers
+    # minus the holes sort out the nesting.
+    outers, holes = [], []
+    for r in rings:
+        if len(r) < 3:
+            continue
+        poly = Polygon(r)
+        if not poly.is_valid:
+            poly = poly.buffer(0)
+        if poly.is_empty:
+            continue
+        (outers if _signed_area(r) > 0 else holes).append(poly)
+    if not outers:
+        outers, holes = holes, []
+    g = unary_union(outers)
+    if holes:
+        g = g.difference(unary_union(holes))
+    if g.is_empty:
+        return None
+    # Section geometry is tile XY (world). The face is seen from -z, where
+    # (u, v) = (-x, -y) -- the same 180 deg mapping to_world applies in
+    # reverse.
+    return affinity.scale(g, -1.0, -1.0, origin=(0, 0))
+
+
+def render_preview(out_png, regions, cols, rows, pitch, face, margin, title,
+                   base=None):
     import matplotlib
     matplotlib.use("Agg")
     import matplotlib.pyplot as plt
@@ -668,12 +764,31 @@ def render_preview(out_png, regions, cols, rows, pitch, face, margin, title):
     fig, ax = plt.subplots(figsize=(max(3.4, W / 11), max(3.4, H / 11 + 0.5)), dpi=190)
     ax.set_facecolor("#141416"); fig.patch.set_facecolor("#141416")
 
+    outline = face_outline(base) if base is not None else None
+
     for r in range(rows):
         for c in range(cols):
             uc = (c - (cols - 1) / 2) * pitch
             vc = (r - (rows - 1) / 2) * pitch
+            if outline is None:
+                ax.add_patch(Rectangle((uc - face / 2, vc - face / 2), face, face,
+                                       facecolor=bg, edgecolor="#0a0a0c", lw=1.0,
+                                       zorder=1))
+                continue
+            # The tile opening, so openings read as the case behind rather than
+            # as tile material.
             ax.add_patch(Rectangle((uc - face / 2, vc - face / 2), face, face,
-                                   facecolor=bg, edgecolor="#0a0a0c", lw=1.0, zorder=1))
+                                   facecolor="#0a0a0c", edgecolor="#0a0a0c",
+                                   lw=1.0, zorder=0.9))
+            for g in ([outline] if isinstance(outline, Polygon)
+                      else list(getattr(outline, "geoms", []))):
+                gg = affinity.translate(g, uc, vc)
+                ax.add_patch(MplPoly(np.array(gg.exterior.coords), closed=True,
+                                     facecolor=bg, edgecolor="none", zorder=1))
+                for ring in gg.interiors:
+                    ax.add_patch(MplPoly(np.array(ring.coords), closed=True,
+                                         facecolor="#0a0a0c", edgecolor="none",
+                                         zorder=1.05))
 
     def draw(g, color, z):
         polys = [g] if isinstance(g, Polygon) else list(getattr(g, "geoms", []))
@@ -698,6 +813,11 @@ def render_preview(out_png, regions, cols, rows, pitch, face, margin, title):
                 vc = (rr - (rows - 1) / 2) * pitch
                 cell = box(uc - half, vc - half, uc + half, vc + half)
                 g = r.geom.intersection(cell)
+                # Ink only exists where the base has material to carve. Without
+                # this the preview shows artwork floating over the openings of
+                # a striped base, which is exactly what will not print.
+                if outline is not None and not g.is_empty:
+                    g = g.intersection(affinity.translate(outline, uc, vc))
                 if not g.is_empty:
                     clipped.append(g)
         if clipped:
@@ -740,14 +860,14 @@ def _openscad_supports_backend(exe):
     return "--backend" in (h.stdout + h.stderr)
 
 
-def ensure_base(scad, cached, force=False):
+def ensure_base(scad, cached, force=False, tile_type="blank"):
     import subprocess, shutil
     if cached.exists() and not force:
         return trimesh.load(str(cached))
     if not scad.exists():
         raise SystemExit(
-            f"{scad} missing. The tile base is a git submodule; fetch it with:\n"
-            f"    git submodule update --init")
+            f"{scad} missing. It includes the tile base from a git submodule; "
+            f"fetch it with:\n    git submodule update --init")
     exe = shutil.which("openscad") or shutil.which("OpenSCAD")
     if not exe:
         raise SystemExit(f"{cached} missing and OpenSCAD not found. Install OpenSCAD "
@@ -759,7 +879,7 @@ def ensure_base(scad, cached, force=False):
     # boolean engine then refuses the mesh with "Not all meshes are volumes!".
     # CGAL renders the same solid -- volume agrees to 5 decimal places -- as a
     # clean watertight 332-facet mesh.
-    cmd = [exe, "-o", str(cached), "-D", 'tile_type="blank"',
+    cmd = [exe, "-o", str(cached), "-D", f'tg_base="{tile_type}"',
            "-D", "$colorize_elements=false"]
     if _openscad_supports_backend(exe):
         cmd.append("--backend=CGAL")
@@ -832,7 +952,11 @@ def main(argv=None):
     ap.add_argument("--plate-gap", type=float, default=4.0, help="gap between tiles on the plate")
     ap.add_argument("--plate-origin", type=float, nargs=2, default=(128.0, 128.0),
                     help="plate center for the 3MF (default 128 128, an A1/P1 bed)")
-    ap.add_argument("--rebuild-base", action="store_true", help="re-render tile_base.stl")
+    ap.add_argument("--base", choices=sorted(BASES), default="blank",
+                    help="which tile base to carve into (default: blank). "
+                         "frame/horizontal/cross/grid have open faces -- "
+                         "artwork over an opening has nothing to print into")
+    ap.add_argument("--rebuild-base", action="store_true", help="re-render the tile base")
     ap.add_argument("--credits", action="store_true", help="print attribution and exit")
     a = ap.parse_args(argv)
 
@@ -856,9 +980,9 @@ def main(argv=None):
     if not art.exists():
         raise SystemExit(f"no such file: {art}")
 
-    base = ensure_base(here / "vendor" / "desktoptiles" / "tile_base.scad",
-                       here / "assets" / "tile_base.stl",
-                       force=a.rebuild_base)
+    base = ensure_base(here / "bases" / "tilegen_bases.scad",
+                       here / "assets" / BASES[a.base],
+                       force=a.rebuild_base, tile_type=a.base)
 
     if art.suffix.lower() == ".svg":
         regions = load_svg(art, fill_rule=a.fill_rule)
@@ -912,7 +1036,14 @@ def main(argv=None):
               f"round to {round(n_layers)*a.layer:.2f} mm for a clean color boundary")
 
     print(f"  {src}: {len(regions)} color region(s) -> {cols}x{rows} tile(s), "
-          f"{a.depth} mm deep")
+          f"{a.depth} mm deep, {a.base} base")
+    if a.base in OPEN_FACE:
+        print(f"  ! the {a.base} base has an open face. Artwork over an opening "
+              f"has no material to carve, so it does not print there, and what "
+              f"remains is split into one fragment per opening -- measured 28 "
+              f"fragments for the example logo on 'cross'. Fragments narrower "
+              f"than the mesh tolerance can come out non-watertight; slice-check "
+              f"before committing a long print, or use --base blank.")
 
     objects, made, kept_area = [], 0, 0.0
     gap = a.face + a.plate_gap
@@ -988,7 +1119,8 @@ def main(argv=None):
     if not a.no_preview:
         png = outdir / f"{stem}_preview.png"
         render_preview(png, regions, cols, rows, a.pitch, a.face, a.margin,
-                       f"{stem}  -  {cols}x{rows}  -  as seen on the panel")
+                       f"{stem}  -  {cols}x{rows}  -  {a.base} base, as seen "
+                       f"on the panel", base=base)
         print(f"  = {png}")
     return 0
 

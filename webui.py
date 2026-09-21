@@ -25,6 +25,7 @@ from fastapi import FastAPI, Form, HTTPException, UploadFile
 from fastapi.responses import FileResponse, HTMLResponse, JSONResponse
 
 HERE = Path(__file__).resolve().parent
+sys.path.insert(0, str(HERE))
 PAGE = HERE / "web" / "index.html"
 JOBS = Path(tempfile.gettempdir()) / "tilegen-webui"
 JOBS.mkdir(parents=True, exist_ok=True)
@@ -97,6 +98,7 @@ def generate(
     set_body_color: bool = Form(False),
     body_color: str = Form(""),
     filament_type: str = Form("PLA"),
+    base: str = Form("blank"),
 ):
     # The panel is 3x7; allow past that for oversized artwork, but keep it two
     # digits so a typo cannot ask for a million tiles and wedge the machine.
@@ -119,8 +121,12 @@ def generate(
     with src.open("wb") as fh:
         shutil.copyfileobj(art.file, fh)
 
+    import tilegen as _tg
+    if base not in _tg.BASES:
+        raise HTTPException(400, f"unknown base '{base}'")
+
     cmd = [sys.executable, str(HERE / "tilegen.py"), str(src),
-           "-o", str(d / "out"),
+           "-o", str(d / "out"), "--base", base,
            "--grid", f"{cols}x{rows}", "--margin", str(margin), "--depth", str(depth),
            "--fit", fit, "--colors", str(colors), "--background", background,
            "--scale", str(scale), "--rotate", str(rotate), "--bleed", str(bleed),

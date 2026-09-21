@@ -307,6 +307,103 @@ _z = zipfile.ZipFile(os.path.join(_out, "bands_3x1.3mf"))
 check("no project_settings.config without the flag (default is unchanged)",
       "Metadata/project_settings.config" not in _z.namelist())
 
+print("\n8. tile bases")
+# Every base has to be a closed solid or the boolean stage cannot use it, and
+# body + ink has to reconstruct whichever base was chosen -- not just blank.
+sys.path.insert(0, HERE)
+import tilegen as _T
+
+for _name, _file in sorted(_T.BASES.items()):
+    _b = trimesh.load(os.path.join(HERE, "assets", _file))
+    check(f"{_name} base is watertight", _b.is_watertight,
+          f"vol {_b.volume:.2f}, {len(_b.faces)} faces")
+    check(f"{_name} base is 28.5 x 28.5 x 4.4 mm",
+          bool(np.allclose(_b.extents, [28.5, 28.5, 4.4], atol=0.02)),
+          str(_b.extents.round(3)))
+
+_out, _ = run("--margin", "2.5", "--base", "grid", "--no-3mf")
+_gb = trimesh.load(os.path.join(_out, "fuchsia_body.stl"))
+_gi = [trimesh.load(p) for p in glob.glob(os.path.join(_out, "fuchsia_ink_*.stl"))]
+_grid = trimesh.load(os.path.join(HERE, "assets", _T.BASES["grid"]))
+check("body + ink reconstruct the grid base",
+      abs(_grid.volume - (_gb.volume + sum(i.volume for i in _gi))) < 1e-3,
+      f"delta {abs(_grid.volume - (_gb.volume + sum(i.volume for i in _gi))):+.6f} mm3")
+
+# The preview has to show the base it was asked for. It used to draw a solid
+# square whatever the base was, which previews a tile that will never print.
+_areas = {}
+for _name, _file in sorted(_T.BASES.items()):
+    _o = _T.face_outline(trimesh.load(os.path.join(HERE, "assets", _file)))
+    check(f"{_name} face outline is derived from the mesh", _o is not None,
+          f"area {_o.area:.2f} mm2" if _o is not None else "None")
+    if _o is not None:
+        _areas[_name] = round(_o.area, 2)
+check("each base has a distinct face area (preview reflects the base)",
+      len(set(_areas.values())) == len(_areas), str(_areas))
+check("blank has the largest face", _areas.get("blank") == max(_areas.values()))
+
+_, _log = run("--margin", "2.5", "--base", "cross", "--no-stl", "--no-3mf",
+              "--no-preview")
+check("open-faced bases warn about fragmentation",
+      "open face" in _log and "fragment" in _log)
+_, _log = run("--margin", "2.5", "--base", "blank", "--no-stl", "--no-3mf",
+              "--no-preview")
+check("blank base does not warn", "open face" not in _log)
+
+print("\n9. raster input")
+# A photo fails in a way an SVG never does. Traced contours produce hundreds
+# of polygons that touch each other and carry interior rings, and
+# trimesh.creation.extrude_polygon returns non-volumes for some of those --
+# which surfaced only as "Not all meshes are volumes!" three stages later.
+# Seeded noise reproduces that geometry shape deterministically.
+sys.path.insert(0, HERE)
+import tilegen as _T2r
+_rng = np.random.default_rng(20260920)
+_noise = _rng.random((160, 160))
+_k = 9
+_sm = np.copy(_noise)
+for _ in range(3):                       # cheap blur -> blobby, holey regions
+    _sm = (_sm + np.roll(_sm, 1, 0) + np.roll(_sm, -1, 0)
+           + np.roll(_sm, 1, 1) + np.roll(_sm, -1, 1)) / 5.0
+_img = (_sm > _sm.mean()).astype(np.uint8) * 255
+_rgb = np.dstack([_img, _img, _img])
+_jpg = os.path.join(TMP, "noise.jpg")
+_Image.fromarray(_rgb).save(_jpg, quality=90)
+
+_out, _log = run_art(_jpg, "--margin", "2.5", "--colors", "2",
+                     "--background", "none")
+_body = trimesh.load(glob.glob(os.path.join(_out, "*_body.stl"))[0])
+_inks = [trimesh.load(p) for p in glob.glob(os.path.join(_out, "*_ink_*.stl"))]
+check("JPEG produces a body", _body.volume > 0, f"{_body.volume:.1f} mm3")
+check("JPEG produces ink parts", len(_inks) > 0, f"{len(_inks)} part(s)")
+# Watertightness is asserted on the meshes as built, not as reloaded. Blobby
+# artwork leaves fragments touching at single points; manifold keeps those as
+# separate shells, but any loader that merges coincident vertices welds them
+# into a non-manifold vertex. Reloading and asserting watertight would be
+# testing the loader's merge tolerance, not this tool. Volume is exact either
+# way, which is what the reconstruction check below pins down.
+_rr = _T2r.load_raster(_jpg, n_colors=2)
+_rr = _T2r.resolve_overlaps(_rr)
+_rr, _ = _T2r.fit_transform(_rr, 1, 1, _T2r.PITCH, _T2r.TILE, 2.5, 0,
+                            "contain", 0, 100, 0.02)
+_ii = _T2r.clip_to_tile(_rr, 0, 0, 1, 1, _T2r.PITCH, _T2r.TILE, 2.5)
+_wb, _wp = _T2r.build_tile(base, [_T2r.to_world(x.geom, False) for x in _ii], 0.6)
+check("as-built body is watertight", _wb.is_watertight,
+      f"{len(_wb.faces)} faces")
+check("as-built ink parts are watertight", all(m.is_watertight for m in _wp),
+      f"{len(_wp)} part(s)")
+check("body + ink reconstruct the base",
+      abs(base.volume - (_body.volume + sum(i.volume for i in _inks))) < 1e-3,
+      f"delta {abs(base.volume - (_body.volume + sum(i.volume for i in _inks))):+.6f} mm3")
+
+# The geometry has to be genuinely awkward or the test proves nothing.
+from shapely.geometry import Polygon as _Poly
+_g = _rr[0].geom
+_ps = [_g] if isinstance(_g, _Poly) else list(_g.geoms)
+_holed = sum(1 for p in _ps if len(p.interiors) > 0)
+check("the fixture really is awkward geometry", len(_ps) > 50 and _holed > 0,
+      f"{len(_ps)} polygons, {_holed} with holes")
+
 print()
 if skipped:
     print(f"{len(skipped)} section(s) SKIPPED: " + ", ".join(skipped))

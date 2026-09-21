@@ -123,8 +123,22 @@
         <input name="colors" type="number" min="2" value="2"></label>
     </div>
 
-    <label><span>Background</span>
-      <input name="background" value="auto"></label>
+    <div class="row">
+      <label><span>Background</span>
+        <input name="background" value="auto"></label>
+      <label><span>Tile base</span>
+        <select name="base" id="base">
+          <option value="blank">blank (solid face)</option>
+          <option value="horizontal">horizontal stripes</option>
+          <option value="cross">diagonal stripes</option>
+          <option value="grid">grid</option>
+          <option value="frame">frame only</option>
+        </select></label>
+    </div>
+    <p class="hint" id="basehint" hidden>Open-faced base: artwork over an
+      opening has nothing to carve, so it does not print there, and what
+      remains is split into one fragment per opening. Slice-check before a
+      long print.</p>
 
     <div class="checks">
       <label><input type="checkbox" name="invert" value="true"> invert</label>
@@ -233,6 +247,12 @@ function paint(text, ok) {
 }
 
 // Only show the filament fields when they will actually be used.
+const baseSel = document.getElementById('base');
+const baseHint = document.getElementById('basehint');
+baseSel.addEventListener('change', () => {
+  baseHint.hidden = baseSel.value === 'blank';
+});
+
 const embed = f.elements.namedItem('embed_filaments');
 const filopts = document.getElementById('filopts');
 embed.addEventListener('change', () => { filopts.hidden = !embed.checked; });
