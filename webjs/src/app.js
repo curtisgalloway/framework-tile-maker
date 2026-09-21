@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import {loadSVG} from './svgload.js';
+import {loadRaster} from './raster.js';
 import {parseSTL, exportSTL} from './stl.js';
 import {write3MF} from './threemf.js';
 import {
@@ -19,6 +20,7 @@ const log = (msg, cls = '') => {
 };
 
 const baseCache = new Map();
+let artFile = null;
 let svgText = null;
 let lastFiles = [];
 let busy = false;
@@ -112,6 +114,8 @@ function opts() {
     embed: $('embed').checked,
     filamentType: $('filamentType').value,
     base: $('base').value,
+    colors: +$('colors').value,
+    background: $('background').value,
   };
 }
 
@@ -132,7 +136,7 @@ async function generate() {
   await yieldToPaint();
 
   try {
-    if (!svgText) throw new Error('pick an SVG first');
+    if (!artFile) throw new Error('pick a file first');
     progress(0.02, 'loading tile base\u2026');
     await paintTick();
     const baseManifold = await loadBase(o.base);
@@ -144,11 +148,27 @@ async function generate() {
     const canvasMm = Math.hypot(
         (o.cols - 1) * o.pitch + o.face - 2 * o.margin,
         (o.rows - 1) * o.pitch + o.face - 2 * o.margin);
-    progress(0.06, 'parsing SVG\u2026');
+    const isSVG = /\.svg$/i.test(artFile.name) ||
+                  artFile.type === 'image/svg+xml';
+    progress(0.06, isSVG ? 'parsing SVG\u2026' : 'quantizing image\u2026');
     await paintTick();
-    const regions = loadSVG(svgText, {tolMm: o.tolMm, canvasMm});
+
+    let regions, droppedBg = null;
+    if (isSVG) {
+      regions = loadSVG(svgText, {tolMm: o.tolMm, canvasMm});
+    } else {
+      const res = await loadRaster(artFile,
+          {nColors: o.colors, background: o.background});
+      regions = res.regions;
+      droppedBg = res.background;
+      if (droppedBg) {
+        log(`  background ${droppedBg} -> bare tile body (filament 1); ` +
+            `set background to 'none' to print it`);
+      }
+    }
     if (!regions.length) throw new Error('no filled artwork found in that file');
-    log(`svg: ${regions.length} color region(s) -> ${o.cols}x${o.rows} tile(s), ` +
+    log(`${isSVG ? 'svg' : 'raster'}: ${regions.length} color region(s) -> ` +
+        `${o.cols}x${o.rows} tile(s), ` +
         `${o.depth} mm deep, ${o.base} base`);
     if (OPEN_FACE.has(o.base)) {
       log(`  ! the ${o.base} base has an open face. Artwork over an opening ` +
@@ -238,7 +258,8 @@ async function generate() {
           regions.map((r) => ({color: r.hex.toUpperCase(), type: o.filamentType})));
     }
 
-    const stem = ($('file').files[0]?.name || 'tilegen').replace(/\.svg$/i, '')
+    const stem = (artFile?.name || 'tilegen')
+                     .replace(/\.(svg|png|jpe?g|webp)$/i, '')
                      .replace(/\s+/g, '_');
     const name = made === 1 ? `${stem}.3mf` : `${stem}_${o.cols}x${o.rows}.3mf`;
     progress(0.87, 'writing the 3MF\u2026');
@@ -459,7 +480,12 @@ function drawPreview(slots, o, outline = null) {
 
 $('file').addEventListener('change', async (e) => {
   const f = e.target.files[0];
-  svgText = f ? await f.text() : null;
+  artFile = f || null;
+  // Only SVG needs its text up front; rasters are decoded at generate time,
+  // because the decode depends on settings the user may still be changing.
+  svgText = (f && (/\.svg$/i.test(f.name) || f.type === 'image/svg+xml'))
+      ? await f.text() : null;
+  $('rasteropts').hidden = !f || svgText !== null;
 });
 $('embed').addEventListener('change', () => {
   $('filopts').hidden = !$('embed').checked;

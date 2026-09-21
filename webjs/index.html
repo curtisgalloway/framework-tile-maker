@@ -1,7 +1,7 @@
 <!doctype html>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>tilegen (browser spike)</title>
+<title>tilegen</title>
 <style>
   :root {
     --bg:#141416; --panel:#1c1c20; --line:#2c2c33; --ink:#e8e8ea;
@@ -68,14 +68,27 @@
 </style>
 
 <header>
-  <h1>tilegen — browser spike</h1>
+  <h1>tilegen</h1>
   <div id="status">loading manifold…</div>
 </header>
 
 <main>
   <div class="card">
-    <label><span>Artwork — SVG only (this is the spike)</span>
-      <input type="file" id="file" accept=".svg,image/svg+xml"></label>
+    <label><span>Artwork — SVG, PNG, JPG or WEBP</span>
+      <input type="file" id="file"
+             accept=".svg,.png,.jpg,.jpeg,.webp,image/*"></label>
+
+    <div id="rasteropts" hidden>
+      <div class="row">
+        <label><span>Colors</span>
+          <input id="colors" type="number" min="2" max="8" value="2"></label>
+        <label><span>Background</span>
+          <input id="background" value="auto"></label>
+      </div>
+      <p class="hint">Images only. <code>auto</code> drops the color around the
+        border so the bare tile shows through and you save a filament;
+        <code>none</code> prints it.</p>
+    </div>
 
     <div class="row">
       <label><span>Columns</span><input id="cols" type="number" min="1" max="99" value="1"></label>
@@ -144,4 +157,4 @@
   </section>
 </main>
 
-<script type="module" src="./src/app.js?v=6"></script>
+<script type="module" src="./src/app.js?v=8"></script>
