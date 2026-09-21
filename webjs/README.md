@@ -3,10 +3,10 @@ SPDX-FileCopyrightText: 2026 Curtis Galloway
 SPDX-License-Identifier: Apache-2.0
 -->
 
-# tilegen in the browser — SVG spike
+# tilegen in the browser
 
-A spike, not a replacement. It answers one question: can the whole pipeline
-run in a tab, with no Python, no server and no install? **Yes.**
+The default way to use tilegen: the whole pipeline in a tab, with no Python,
+no server and no install. SVG and raster both work.
 
 ```bash
 python3 -m http.server 8790 --directory ..   # any static server will do
@@ -65,17 +65,17 @@ inheritance, and `getCTM` bakes in nested transforms.
 
 ## Not ported
 
-- Raster input (`--colors`, `--background`, Otsu, k-means). SVG only, by
-  design — that is the next chunk, and the biggest.
-- `feature_report` thin-feature warnings, `--invert`, `--bleed`, `--rotate`,
-  `--scale`, crop reporting, plate layout options.
-- `selftest.py`. The Python remains the reference; this was checked against it
-  by hand, which is not a substitute for running the same assertions here.
+- `--rotate`, `--bleed`, `--scale`, `--invert`, `--plate-origin`.
+- `feature_report`'s thin-feature warnings and the crop report. These are the
+  most valuable of the gaps: they are what tells you a logo will not survive
+  a 0.4 mm nozzle before you print it.
+- `--rebuild-base`, which needs OpenSCAD and so is inherently a CLI job.
+- `selftest.py`. The Python remains the reference and the browser is measured
+  against it by hand, which is not the same as running the same assertions
+  here. **This is the most important gap**: two implementations of the 3MF
+  extruder logic is exactly where drift hides, and a per-tile filament index
+  silently printed three colors as one filament in the Python for an unknown
+  length of time before a test caught it.
 
-## If this goes further
-
-Replace the Python, don't run both. Two implementations of the 3MF extruder
-logic is exactly where drift hides — a per-tile filament index silently
-printed three colors as one filament in the Python for an unknown length of
-time, and a second copy doubles that surface while halving the attention each
-gets.
+The honest state: the browser version is the default because it is easier to
+run and produces the same geometry, not because it is better tested.
