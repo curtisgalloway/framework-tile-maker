@@ -1,0 +1,242 @@
+<!doctype html>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>tilegen — help</title>
+<style>
+  :root { --bg:#141416; --panel:#1c1c20; --line:#2c2c33; --ink:#e8e8ea;
+          --dim:#9a9aa4; --accent:#7aa2f7; --warn:#e0af68; }
+  * { box-sizing:border-box; }
+  body { margin:0; background:var(--bg); color:var(--ink);
+         font:15px/1.7 ui-sans-serif,-apple-system,"Segoe UI",sans-serif; }
+  header { padding:18px 20px; border-bottom:1px solid var(--line); }
+  .head { display:flex; gap:20px; align-items:baseline;
+          justify-content:space-between; flex-wrap:wrap; max-width:960px;
+          margin:0 auto; }
+  h1 { font-size:17px; margin:0; }
+  .links a { color:var(--ink); text-decoration:none; font-size:12.5px;
+             border:1px solid var(--line); border-radius:7px; padding:7px 11px;
+             background:#101014; white-space:nowrap; }
+  .links a:hover { border-color:var(--accent); color:var(--accent); }
+  main { max-width:960px; margin:0 auto; padding:8px 20px 60px; }
+  h2 { font-size:15px; margin:34px 0 8px; padding-top:10px;
+       border-top:1px solid var(--line); }
+  h3 { font-size:14px; margin:22px 0 4px; color:var(--ink); }
+  p, li { max-width:72ch; }
+  a { color:var(--accent); }
+  code { background:#101014; border:1px solid var(--line); border-radius:4px;
+         padding:1px 5px; font:13px/1.4 ui-monospace,Menlo,monospace; }
+  table { border-collapse:collapse; margin:10px 0; font-size:14px;
+          width:100%; max-width:760px; }
+  th, td { text-align:left; padding:7px 10px; border-bottom:1px solid var(--line);
+           vertical-align:top; }
+  th { color:var(--dim); font-weight:600; font-size:12.5px; }
+  .note { background:var(--panel); border:1px solid var(--line);
+          border-left:3px solid var(--accent); border-radius:8px;
+          padding:12px 16px; margin:16px 0; }
+  .note.warn { border-left-color:var(--warn); }
+  .dim { color:var(--dim); }
+</style>
+
+<header>
+  <div class="head">
+    <h1>tilegen &mdash; help</h1>
+    <nav class="links">
+      <a href="./">&larr; Back to the app</a>
+      <a href="https://github.com/curtisgalloway/framework-tile-maker"
+         target="_blank" rel="noopener">Source on GitHub</a>
+    </nav>
+  </div>
+</header>
+
+<main>
+
+<p>tilegen turns artwork into <strong>Framework Desktop front-panel
+tiles</strong>: the artwork is carved into the tile face as a recess, and a
+matching insert fills it exactly. You print the two in different filaments and
+get a crisp, flush, multi-color tile.</p>
+
+<p class="dim">Everything happens in your browser. Your artwork is never
+uploaded anywhere.</p>
+
+<h2>Start here</h2>
+
+<ol>
+  <li>Pick an <strong>SVG</strong> (sharpest results) or a PNG/JPG.</li>
+  <li>Leave everything at its defaults and press <strong>Generate</strong>.</li>
+  <li>Download the <strong><code>.3mf</code></strong> and open it in Bambu
+      Studio or OrcaSlicer.</li>
+  <li>Set filament 1 to your tile color and filament 2 to your artwork color.
+      Slice.</li>
+</ol>
+
+<div class="note">
+  <strong>The <code>.3mf</code> is the file you want.</strong> It contains both
+  parts with their filaments already assigned. The individual <code>.stl</code>
+  files behind the fold are there if you would rather assemble it yourself.
+</div>
+
+<h2>What comes out</h2>
+
+<table>
+  <tr><th>File</th><th>What it is</th></tr>
+  <tr><td><code>NAME.3mf</code></td>
+      <td>Both parts as one object, filaments assigned. <strong>Use this.</strong></td></tr>
+  <tr><td><code>NAME_body.stl</code></td>
+      <td>The tile, with the artwork pocketed out of its face</td></tr>
+  <tr><td><code>NAME_ink_N_#RRGGBB.stl</code></td>
+      <td>The insert that fills that pocket exactly</td></tr>
+</table>
+
+<p>Body and inserts share the same boundary surface, so there is no gap and no
+overlap: together they reconstruct the original tile to within
+2&nbsp;&times;&nbsp;10<sup>-5</sup>&nbsp;mm&sup3;.</p>
+
+<h2>The options</h2>
+
+<h3>Columns &amp; rows</h3>
+<p>How many tiles the artwork is split across. <strong>1&nbsp;&times;&nbsp;1</strong>
+is a single tile; the full Framework Desktop panel is
+<strong>3&nbsp;&times;&nbsp;7</strong>, and the <em>use it</em> link fills that
+in along with the settings that suit it.</p>
+
+<h3>Margin</h3>
+<p>Keep-out from each tile edge, in millimeters. Use <strong>0</strong> for
+artwork spanning several tiles so it runs across the seams; use
+<strong>2&ndash;3</strong> for a single centered logo.</p>
+
+<h3>Depth</h3>
+<p>How deep the artwork is recessed. <strong>0.6&nbsp;mm</strong> is three
+layers at 0.2&nbsp;mm, which is opaque with most filaments. Go deeper for
+white-on-black, where three layers can still show through.</p>
+
+<div class="note warn">
+  Past <strong>1.6&nbsp;mm</strong> the pocket breaks into the retention hook
+  cut-outs on the back of the tile. tilegen warns you when you cross that line.
+</div>
+
+<h3>Fit</h3>
+<table>
+  <tr><td><code>contain</code></td><td>the whole artwork fits inside the grid</td></tr>
+  <tr><td><code>cover</code></td><td>fills the grid and crops the overflow</td></tr>
+  <tr><td><code>stretch</code></td><td>distorts to fit exactly</td></tr>
+</table>
+
+<h3>Tile base</h3>
+<p>What the artwork is carved into.</p>
+<table>
+  <tr><th>Base</th><th>Face</th></tr>
+  <tr><td><code>blank</code></td><td>solid &mdash; the default, and what you want most of the time</td></tr>
+  <tr><td><code>horizontal</code></td><td>horizontal stripes</td></tr>
+  <tr><td><code>cross</code></td><td>diagonal stripes</td></tr>
+  <tr><td><code>grid</code></td><td>crossed stripes</td></tr>
+  <tr><td><code>frame</code></td><td>no face at all, just the border</td></tr>
+</table>
+
+<div class="note warn">
+  The four non-blank bases have <strong>open faces</strong>. Artwork over an
+  opening has no material to carve, so it does not print there, and what
+  remains is split into one fragment per opening. That is the effect &mdash;
+  but check the preview, which shows exactly what survives.
+</div>
+
+<h3>Nozzle</h3>
+<p>Drives the thin-feature warnings. tilegen checks two things people get
+caught by: artwork strokes thinner than the nozzle, and <strong>gaps</strong>
+thinner than the nozzle. The second is the sneaky one &mdash; a logo with fine
+counters prints as a blob not because the ink is too thin but because the
+spaces between it are.</p>
+
+<h3>Images only: colors &amp; background</h3>
+<p><strong>Colors</strong> is how many colors to quantize a photo down to.
+Region&nbsp;1 becomes filament&nbsp;2, region&nbsp;2 becomes filament&nbsp;3,
+and so on.</p>
+<p><strong>Background</strong> set to <code>auto</code> makes the color around
+the border become the bare tile body instead of a printed color &mdash; saving
+a filament and all of its purge. Use <code>none</code> to print it anyway, or
+name a color like <code>#ffffff</code>.</p>
+
+<h3>Blank tile for every empty cell</h3>
+<p>On by default. Ask for 3&nbsp;&times;&nbsp;7 and you get 21 tiles, including
+the cells your artwork never reaches &mdash; a panel needs all of them to be
+physically complete. Turn it off to get only the tiles that carry artwork.</p>
+
+<h3>Set filament colors in the 3MF</h3>
+<p>Writes your colors into the file so the slicer opens with them already
+assigned instead of bare slot numbers. Ink colors come from the artwork; tick
+<em>also set the body color</em> to name the spool you will load for the tile
+itself.</p>
+
+<h3>Mirror</h3>
+<p>Only if you print the tile face-up. By default the decorated face is at
+z&nbsp;=&nbsp;0 with the hooks rising above it, which is the orientation you
+want.</p>
+
+<h2>Printing</h2>
+
+<ul>
+  <li><strong>Print face down.</strong> The model already sits that way. The
+      artwork lands in the first few layers against the build plate, which
+      gives the crispest color boundary and a smooth finish.</li>
+  <li><strong>Two colors, two nozzles.</strong> On a dual-nozzle printer,
+      assigning body and ink to separate nozzles avoids a purge tower
+      entirely. Three or more colors pulls from an AMS and purges normally.</li>
+  <li><strong>Body is filament 1.</strong> Inks are 2, 3, 4&hellip; in the
+      order listed in the console.</li>
+  <li>A tile is 28.5&nbsp;mm square; all 21 fit a 256&nbsp;mm plate at once.</li>
+</ul>
+
+<h2>Why 28.60 mm?</h2>
+
+<p>The tile pitch is measured from Framework's own released CAD: the openings
+step by exactly 28.60&nbsp;mm in both axes. Several community projects use
+28.5, which drifts about 0.6&nbsp;mm over seven rows. The whole tile face is
+visible &mdash; the smaller openings deeper in the cover are for the retention
+hooks, not a window over the face &mdash; so artwork runs across tile
+boundaries nearly unbroken, with only a ~0.15&nbsp;mm seam.</p>
+
+<h2>Not in the browser</h2>
+
+<p>The command-line version in the repository has a few extras: rotating and
+scaling artwork, bleed, inverting, plate layout, and re-rendering the tile
+bases from source with OpenSCAD.</p>
+
+<h2 id="credits">Credits &amp; licensing</h2>
+
+<p><strong>The tile base is the work of Marcin Raczkowski
+(Marmot.Tech)</strong>, licensed
+<a href="https://creativecommons.org/licenses/by-sa/4.0/" target="_blank"
+   rel="noopener">CC&nbsp;BY-SA&nbsp;4.0</a>, from
+<a href="https://github.com/jermicide/desktoptiles" target="_blank"
+   rel="noopener">jermicide/desktoptiles</a>. It is used <strong>unmodified</strong>
+&mdash; vendored as a git submodule, so no copy of his work lives in this
+project. All tile body geometry is his: the frame, the retention hooks, the
+constraints, the raised edges, and the hook cut-outs that make the slicer build
+proper walls. tilegen only adds artwork to it.</p>
+
+<p>His tile follows Framework's published
+<a href="https://github.com/FrameworkComputer/Framework-Desktop/tree/main/Tiles"
+   target="_blank" rel="noopener">tile specification</a>.</p>
+
+<div class="note">
+  <p style="margin-top:0"><strong>Tiles you generate are derivative works of
+  his tile.</strong> If you publish or sell them &mdash; on Printables,
+  MakerWorld, Etsy, anywhere &mdash; CC&nbsp;BY-SA&nbsp;4.0 asks you to:</p>
+  <ol style="margin-bottom:0">
+    <li>credit <strong>Marcin Raczkowski (Marmot.Tech)</strong> and link
+        <a href="https://github.com/jermicide/desktoptiles" target="_blank"
+           rel="noopener">his project</a>,</li>
+    <li>license the tiles CC&nbsp;BY-SA&nbsp;4.0 as well, and</li>
+    <li>state that the work was modified.</li>
+  </ol>
+</div>
+
+<p>Keeping the tiles to yourself? Nothing to do.</p>
+
+<p>tilegen's own code is <strong>Apache&nbsp;2.0</strong>. The two licenses are
+not compatible in either direction and cannot be merged, which is why they are
+kept separate &mdash; and the tile base was never ours to relicense anyway. The
+<a href="https://github.com/curtisgalloway/framework-tile-maker/blob/main/NOTICE.md"
+   target="_blank" rel="noopener">full notices</a> say which license covers
+which file.</p>
+
+</main>
