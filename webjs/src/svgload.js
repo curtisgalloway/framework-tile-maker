@@ -72,6 +72,7 @@ export function splitSubpaths(d) {
   const toks = tokenize(d);
   const subs = [];
   let cur = null;
+  let started = false;
   let x = 0, y = 0, sx = 0, sy = 0;
 
   const push = (t) => {
@@ -90,14 +91,24 @@ export function splitSubpaths(d) {
       // that follow resolve correctly in isolation.
       cur = {d: `M ${x} ${y}`, closed: false};
       subs.push(cur);
+      started = true;
       continue;
     }
-    if (!cur) continue;
+    if (!started) continue;            // commands before the first M
     if (up === 'Z') {
       cur.closed = true;
       cur.d += 'Z';
       x = sx; y = sy;
+      cur = null;                      // Z ends this subpath
       continue;
+    }
+    if (!cur) {
+      // Drawing commands may follow a Z with no new M. SVG restarts the
+      // subpath at the closepath point; appending to the previous ring
+      // instead merges two rings into the single blob this function exists to
+      // prevent, and the fill rule is then evaluated over the wrong shape.
+      cur = {d: `M ${sx} ${sy}`, closed: false};
+      subs.push(cur);
     }
     push(t);
     // Advance the current point. Only the final coordinate pair matters.
@@ -116,6 +127,50 @@ export function splitSubpaths(d) {
   return subs;
 }
 
+// Elements that can execute or fetch. <foreignObject> drags in the whole HTML
+// parser; the SMIL set is the non-obvious half, since animation elements carry
+// their own event handlers.
+const STRIP_ELEMENTS = new Set([
+  'script', 'foreignobject', 'image', 'audio', 'video', 'iframe',
+  'animate', 'animatemotion', 'animatetransform', 'set', 'handler',
+]);
+
+/** True if this element or any ancestor up to `root` is display:none or opacity:0. */
+function hiddenByAncestor(el, root) {
+  for (let n = el; n && n !== root.parentNode; n = n.parentElement) {
+    const cs = getComputedStyle(n);
+    if (cs.display === 'none' || cs.visibility === 'hidden') return true;
+    if (parseFloat(cs.opacity) === 0) return true;
+  }
+  return false;
+}
+
+/** Remove everything executable or network-fetching from a parsed SVG. */
+function sanitize(root) {
+  const walk = (el) => {
+    for (const child of [...el.children]) walk(child);
+    if (STRIP_ELEMENTS.has(el.localName.toLowerCase())) {
+      el.remove();
+      return;
+    }
+    for (const attr of [...el.attributes]) {
+      const n = attr.name.toLowerCase();
+      // Any on* handler, plus references that leave the document. An internal
+      // "#id" reference is how <use> and gradients legitimately work.
+      if (n.startsWith('on')) {
+        el.removeAttribute(attr.name);
+      } else if ((n === 'href' || n === 'xlink:href' || n === 'src') &&
+                 !attr.value.trim().startsWith('#')) {
+        el.removeAttribute(attr.name);
+      } else if (/url\s*\(\s*['"]?\s*(?!#)/i.test(attr.value)) {
+        // url(...) pointing anywhere but this document
+        el.removeAttribute(attr.name);
+      }
+    }
+  };
+  walk(root);
+}
+
 /** Sample one SVGGeometryElement into a ring of [x, y] in root user space. */
 function sampleElement(el, ctm, tol) {
   const total = el.getTotalLength();
@@ -125,7 +180,9 @@ function sampleElement(el, ctm, tol) {
   // the whole run: see chooseTolerance.
   const steps = Math.max(3, Math.min(20000, Math.ceil(total / Math.max(tol, 1e-6))));
   const ring = [];
-  let px = NaN, py = NaN;
+  // Not NaN: `Math.abs(X - NaN) > 1e-9` is false, so the k=0 sample was never
+  // pushed and every OPEN subpath silently lost its first vertex.
+  let px = Infinity, py = Infinity;
   for (let k = 0; k <= steps; k++) {
     const p = el.getPointAtLength((k / steps) * total);
     const X = ctm ? ctm.a * p.x + ctm.c * p.y + ctm.e : p.x;
@@ -141,8 +198,12 @@ function sampleElement(el, ctm, tol) {
 }
 
 function parseColor(css) {
-  const m = /^rgba?\(\s*([\d.]+)[,\s]+([\d.]+)[,\s]+([\d.]+)/.exec(css || '');
+  const m = /^rgba?\(\s*([\d.]+)[,\s]+([\d.]+)[,\s]+([\d.]+)(?:[,\s/]+([\d.]+))?/
+      .exec(css || '');
   if (!m) return null;
+  // fill="transparent" computes to rgba(0,0,0,0) while fill-opacity stays 1,
+  // so dropping alpha here turned a hit-area idiom into a solid black region.
+  if (m[4] !== undefined && parseFloat(m[4]) === 0) return null;
   return [Math.round(+m[1]), Math.round(+m[2]), Math.round(+m[3])];
 }
 
@@ -198,7 +259,23 @@ export function loadSVG(text, {tolMm = 0.02, canvasMm = 0, fillRule = null} = {}
   // work, but must not be display:none or layout never happens.
   host.setAttribute('style',
       'position:absolute;left:-99999px;top:0;width:0;height:0;overflow:hidden');
-  host.innerHTML = text;
+
+  // NOT innerHTML. This is a file the user picked, and assigning it to
+  // innerHTML on the live document runs it: measured in Chrome, <image
+  // onerror>, <foreignObject><img onerror> and SMIL <set onbegin> all fire in
+  // this page's origin, and external href values beacon out. (<script> alone
+  // does not, which makes the hole easy to miss.) Parse inert first, strip
+  // the executable surface, and only then adopt the node.
+  const doc = new DOMParser().parseFromString(text, 'image/svg+xml');
+  if (doc.querySelector('parsererror')) {
+    throw new Error('that file is not parseable SVG');
+  }
+  const root = doc.documentElement;
+  if (!root || root.localName !== 'svg') {
+    throw new Error('no <svg> element found in that file');
+  }
+  sanitize(root);
+  host.appendChild(document.importNode(root, true));
   document.body.appendChild(host);
 
   try {
@@ -210,10 +287,25 @@ export function loadSVG(text, {tolMm = 0.02, canvasMm = 0, fillRule = null} = {}
 
     const drawable = [];
     for (const el of svg.querySelectorAll(
-             'path,rect,circle,ellipse,polygon,polyline,line')) {
+             // No <line>: it cannot enclose an area, but it inherits
+             // fill:black and produced a zero-area ring plus a phantom color
+             // bucket that made an all-lines file look like artwork.
+             'path,rect,circle,ellipse,polygon,polyline')) {
       if (typeof el.getTotalLength !== 'function') continue;
+      // Geometry inside these is a definition, not a drawing. Their computed
+      // display is `inline` in Chrome, so only a structural test excludes it.
+      if (el.closest('defs,mask,clipPath,pattern,symbol,marker')) continue;
+
       const cs = getComputedStyle(el);
       if (cs.display === 'none' || cs.visibility === 'hidden') continue;
+      // Neither display:none nor opacity:0 on an ANCESTOR shows up in the
+      // child's own computed style -- a child of <g display="none"> reports
+      // display:inline and is happily sampled. checkVisibility does not catch
+      // it for SVG presentation attributes either (measured in Chrome 152),
+      // so walk the ancestors explicitly.
+      if (hiddenByAncestor(el, svg)) continue;
+      if (parseFloat(cs.opacity) === 0) continue;
+
       const rgb = parseColor(cs.fill);
       if (!rgb) continue;                       // fill:none or unresolvable
       const fo = parseFloat(cs.fillOpacity);

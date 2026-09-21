@@ -235,6 +235,48 @@ export async function run() {
     r.sections.forEach((x) => x.delete());
   }
 
+  // ---------------------------------------------------------------- 5c
+  section('5c. hostile and awkward SVG');
+  {
+    // Measured in Chrome: assigning a user-picked SVG to innerHTML executes
+    // <image onerror>, <foreignObject><img onerror> and SMIL <set onbegin>
+    // in this page's origin. (<script> alone does not, which makes the hole
+    // easy to miss.) The loader must parse inert and strip that surface.
+    window.__xss = [];
+    const hostile = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 10 10">
+      <image href="nope.png" onerror="window.__xss.push('image')"/>
+      <foreignObject><img src="nope.png" onerror="window.__xss.push('fo')"/></foreignObject>
+      <set onbegin="window.__xss.push('smil')" attributeName="x" to="1"/>
+      <path fill="#123456" d="M0 0 H10 V10 H0 Z"/>
+    </svg>`;
+    const got = loadSVG(hostile, {tolMm: 0.02, canvasMm: 20});
+    await new Promise((r) => setTimeout(r, 120));   // give handlers a chance
+    check('no event handler fired from a hostile SVG',
+          window.__xss.length === 0, JSON.stringify(window.__xss));
+    check('the real path still loaded', got.length === 1 && got[0].hex === '#123456',
+          got.map((r) => r.hex).join(','));
+
+    // Parsing is now strict XML rather than the lenient HTML path innerHTML
+    // used, so malformed input fails loudly instead of being silently
+    // repaired into something unpredictable.
+    let threw = false;
+    try { loadSVG('<svg><path d="M0 0 H10" ></svg>', {tolMm: 0.02, canvasMm: 20}); }
+    catch { threw = true; }
+    check('malformed SVG raises instead of being silently repaired', threw);
+
+    // fill="transparent" computes to rgba(0,0,0,0) while fill-opacity stays 1
+    const invisible = loadSVG(`<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 10 10">
+      <path fill="transparent" d="M0 0 H10 V10 H0 Z"/>
+      <g opacity="0"><path fill="#ff0000" d="M0 0 H5 V5 H0 Z"/></g>
+      <g display="none"><path fill="#00ff00" d="M0 0 H5 V5 H0 Z"/></g>
+      <defs><path fill="#0000ff" d="M0 0 H5 V5 H0 Z"/></defs>
+      <path fill="#abcdef" d="M1 1 H9 V9 H1 Z"/>
+    </svg>`, {tolMm: 0.02, canvasMm: 20});
+    check('transparent / opacity:0 / display:none / defs are all excluded',
+          invisible.length === 1 && invisible[0].hex === '#abcdef',
+          invisible.map((r) => r.hex).join(',') || '(none)');
+  }
+
   // ---------------------------------------------------------------- 6
   section('6. raster input, smooth artwork');
   {
