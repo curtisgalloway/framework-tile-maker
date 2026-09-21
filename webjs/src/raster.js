@@ -71,18 +71,54 @@ export function kmeans(img, k, iters = 12) {
   for (let i = 0, p = 0; i < data.length; i += 4, p += 3) {
     px[p] = data[i]; px[p + 1] = data[i + 1]; px[p + 2] = data[i + 2];
   }
-  const order = Array.from({length: n}, (_, i) => i)
-      .sort((a, b) => (px[a * 3] + px[a * 3 + 1] + px[a * 3 + 2]) -
-                      (px[b * 3] + px[b * 3 + 1] + px[b * 3 + 2]));
+  // Seeding by RANK in luminance order looks deterministic and is, but it
+  // picks by position in the sorted list rather than by colour: when one
+  // colour holds more than a 1/k-spaced share -- a logo on a plain
+  // background, i.e. the normal case -- several seeds land on the SAME pixel.
+  // Duplicated centroids then produce empty clusters and merge the colours
+  // the user asked to separate.
+  //
+  // Farthest-point seeding instead: start from the darkest pixel and
+  // repeatedly take the candidate furthest from every seed so far. Still
+  // fully deterministic -- the same image must quantize the same way every
+  // run or a reprint would not match the first print -- but it spreads by
+  // colour distance. Seeds are chosen over an evenly spaced subsample so this
+  // stays linear on large images.
+  const STRIDE = Math.max(1, Math.floor(n / 4096));
+  const cand = [];
+  for (let i = 0; i < n; i += STRIDE) cand.push(i);
+
   const cent = new Float64Array(k * 3);
-  for (let c = 0; c < k; c++) {
-    const i = order[Math.min(n - 1, Math.floor((c + 0.5) * n / k))];
-    cent[c * 3] = px[i * 3];
-    cent[c * 3 + 1] = px[i * 3 + 1];
-    cent[c * 3 + 2] = px[i * 3 + 2];
+  let first = cand[0];
+  for (const i of cand) {
+    if (px[i * 3] + px[i * 3 + 1] + px[i * 3 + 2] <
+        px[first * 3] + px[first * 3 + 1] + px[first * 3 + 2]) first = i;
+  }
+  cent[0] = px[first * 3];
+  cent[1] = px[first * 3 + 1];
+  cent[2] = px[first * 3 + 2];
+
+  const best = new Float64Array(cand.length).fill(Infinity);
+  for (let c = 1; c < k; c++) {
+    let far = cand[0], farD = -1;
+    for (let j = 0; j < cand.length; j++) {
+      const i = cand[j];
+      const dr = px[i * 3] - cent[(c - 1) * 3];
+      const dg = px[i * 3 + 1] - cent[(c - 1) * 3 + 1];
+      const db = px[i * 3 + 2] - cent[(c - 1) * 3 + 2];
+      const d = dr * dr + dg * dg + db * db;
+      if (d < best[j]) best[j] = d;
+      if (best[j] > farD) { farD = best[j]; far = i; }
+    }
+    cent[c * 3] = px[far * 3];
+    cent[c * 3 + 1] = px[far * 3 + 1];
+    cent[c * 3 + 2] = px[far * 3 + 2];
   }
 
-  const label = new Int32Array(n);
+  // -1, not 0: a zero-initialised label array makes "nothing has been
+  // assigned yet" indistinguishable from "no pixel changed cluster", so the
+  // convergence test below fired after a single pass and returned the seeds.
+  const label = new Int32Array(n).fill(-1);
   for (let it = 0; it < iters; it++) {
     let moved = 0;
     for (let i = 0; i < n; i++) {
@@ -105,10 +141,31 @@ export function kmeans(img, k, iters = 12) {
       cnt[c]++;
     }
     for (let c = 0; c < k; c++) {
-      if (!cnt[c]) continue;
-      cent[c * 3] = sum[c * 3] / cnt[c];
-      cent[c * 3 + 1] = sum[c * 3 + 1] / cnt[c];
-      cent[c * 3 + 2] = sum[c * 3 + 2] / cnt[c];
+      if (cnt[c]) {
+        cent[c * 3] = sum[c * 3] / cnt[c];
+        cent[c * 3 + 1] = sum[c * 3 + 1] / cnt[c];
+        cent[c * 3 + 2] = sum[c * 3 + 2] / cnt[c];
+        continue;
+      }
+      // An empty cluster is a wasted colour the user asked for. Re-seed it on
+      // the pixel worst served by the clusters that do have members, which is
+      // where an extra colour actually helps.
+      let far = 0, farD = -1;
+      for (const i of cand) {
+        let d0 = Infinity;
+        for (let q = 0; q < k; q++) {
+          if (!cnt[q]) continue;
+          const dr = px[i * 3] - cent[q * 3];
+          const dg = px[i * 3 + 1] - cent[q * 3 + 1];
+          const db = px[i * 3 + 2] - cent[q * 3 + 2];
+          d0 = Math.min(d0, dr * dr + dg * dg + db * db);
+        }
+        if (d0 > farD) { farD = d0; far = i; }
+      }
+      cent[c * 3] = px[far * 3];
+      cent[c * 3 + 1] = px[far * 3 + 1];
+      cent[c * 3 + 2] = px[far * 3 + 2];
+      moved++;                       // not converged: a centroid just moved
     }
     if (!moved) break;
   }
@@ -236,8 +293,23 @@ export async function loadRaster(file, {nColors = 2, background = 'auto'} = {}) 
   if (background === 'auto') {
     bg = edge.indexOf(Math.max(...edge));
   } else if (background !== 'none') {
+    // An explicit colour is matched against the QUANTIZED cluster averages,
+    // not the source pixels, so an exact "#ffffff" almost never matches. A
+    // silent -1 then leaves the background printed with nothing said, which
+    // reads as the setting being ignored. Fall back to nearest, and say so
+    // when it is not what was asked for.
     const want = background.replace('#', '').toLowerCase();
     bg = colors.findIndex((c) => hex(c).slice(1) === want);
+    if (bg < 0 && /^[0-9a-f]{6}$/.test(want)) {
+      const t = [0, 2, 4].map((i) => parseInt(want.slice(i, i + 2), 16));
+      let bestD = Infinity;
+      colors.forEach((c, i) => {
+        const d = (c[0] - t[0]) ** 2 + (c[1] - t[1]) ** 2 + (c[2] - t[2]) ** 2;
+        if (d < bestD) { bestD = d; bg = i; }
+      });
+      console.warn(`background ${background} did not match a quantized color; ` +
+                   `using nearest ${hex(colors[bg])}`);
+    }
   }
 
   const regions = [];

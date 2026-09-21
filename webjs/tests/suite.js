@@ -9,7 +9,7 @@
 // mode it exists to prevent.
 
 import {loadSVG} from '../src/svgload.js';
-import {loadRaster} from '../src/raster.js';
+import {loadRaster, kmeans, otsu} from '../src/raster.js';
 import {parseSTL} from '../src/stl.js';
 import {write3MF} from '../src/threemf.js';
 import {featureReport} from '../src/report.js';
@@ -334,6 +334,50 @@ export async function run() {
       check('more than one ink part, so overlaps are actually exercised',
             got.inks.length >= 2, `${got.inks.length} ink parts`);
     }
+  }
+
+  // ---------------------------------------------------------------- 6c
+  section('6c. color quantization on a skewed image');
+  {
+    // A logo on a plain background is the normal case, and it is exactly the
+    // distribution that broke rank-based seeding: several seeds landed on the
+    // same background pixel, leaving empty clusters and merging the colors
+    // the user asked to separate into their average. The k-means branch had
+    // no coverage at all -- every other raster check uses nColors: 2, which
+    // takes the Otsu path.
+    const mk = (W, H, f) => {
+      const d = new Uint8ClampedArray(W * H * 4);
+      for (let y = 0; y < H; y++) {
+        for (let x = 0; x < W; x++) {
+          const i = (y * W + x) * 4, c = f(x, y);
+          d[i] = c[0]; d[i + 1] = c[1]; d[i + 2] = c[2]; d[i + 3] = 255;
+        }
+      }
+      return {data: d};
+    };
+    const skewed = mk(40, 40, (x) => x >= 4 && x < 10 ? [0, 0, 0]
+                                   : x >= 30 && x < 36 ? [200, 30, 30]
+                                   : [255, 255, 255]);
+    const {label, colors} = kmeans(skewed, 3);
+    const counts = [0, 0, 0];
+    for (const l of label) counts[l]++;
+    check('every requested color gets pixels', counts.every((c) => c > 0),
+          JSON.stringify(counts));
+    check('no two clusters collapse to the same color',
+          new Set(colors.map((c) => c.join(','))).size === 3,
+          JSON.stringify(colors));
+    const has = (rgb) => colors.some((c) =>
+        Math.abs(c[0] - rgb[0]) < 12 && Math.abs(c[1] - rgb[1]) < 12 &&
+        Math.abs(c[2] - rgb[2]) < 12);
+    check('the three source colors are all recovered',
+          has([0, 0, 0]) && has([255, 255, 255]) && has([200, 30, 30]),
+          JSON.stringify(colors));
+
+    // Determinism: the same image must quantize identically every run, or the
+    // filament a color maps to would shuffle and a reprint would not match.
+    const again = kmeans(skewed, 3);
+    check('quantization is deterministic',
+          JSON.stringify(again.colors) === JSON.stringify(colors));
   }
 
   // ---------------------------------------------------------------- 7
