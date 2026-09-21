@@ -34,10 +34,26 @@ function parseBinary(buf, n) {
 
 function parseASCII(text) {
   const nums = [];
-  const re = /vertex\s+(\S+)\s+(\S+)\s+(\S+)/g;
+  // \b so `subvertex` does not match, and /i because the format does not
+  // mandate lowercase keywords.
+  const re = /\bvertex\s+(\S+)\s+(\S+)\s+(\S+)/gi;
   let m;
   while ((m = re.exec(text)) !== null) {
-    nums.push(+m[1], +m[2], +m[3]);
+    const x = +m[1], y = +m[2], z = +m[3];
+    if (!Number.isFinite(x) || !Number.isFinite(y) || !Number.isFinite(z)) {
+      throw new Error(`STL: non-numeric vertex "${m[1]} ${m[2]} ${m[3]}"`);
+    }
+    nums.push(x, y, z);
+  }
+  // Returning an empty mesh here is worse than failing: it is indistinguishable
+  // from a valid empty model, and the caller hands it to Manifold, which fails
+  // later with something that does not mention the file.
+  if (!nums.length) {
+    throw new Error('STL: no vertices found (not a readable ASCII or binary STL)');
+  }
+  if (nums.length % 9 !== 0) {
+    throw new Error(`STL: ${nums.length / 3} vertices is not a whole number ` +
+                    `of triangles (file truncated mid-facet?)`);
   }
   return weld(new Float32Array(nums));
 }
@@ -50,24 +66,44 @@ function parseASCII(text) {
  * welding is required, not an optimization.
  */
 function weld(positions) {
+  // Snap to a grid, but ALSO look in the neighbouring cells before deciding a
+  // vertex is new. Hashing a bare quantized key is not enough: two writes of
+  // the same physical corner can differ in the last float32 bit, and if that
+  // difference straddles a cell boundary (2.500005 -> "2.50001" against
+  // 2.500004 -> "2.50000") the corner does not weld and the mesh keeps a crack
+  // -- precisely the non-manifold input welding exists to prevent. The float32
+  // ulp near tile coordinates is ~1e-6 against this 1e-5 grid, so boundary
+  // straddles are rare but not rare enough over thousands of vertices.
+  const GRID = 1e5;                      // 5 decimal places
   const map = new Map();
   const verts = [];
   const indices = new Uint32Array(positions.length / 3);
+
   for (let i = 0; i < positions.length; i += 3) {
-    // Quantize before hashing: STL stores float32 text, so the same corner can
-    // differ in the last bit between faces and never match as an exact key.
-    const key = `${positions[i].toFixed(5)},${positions[i + 1].toFixed(5)},` +
-                `${positions[i + 2].toFixed(5)}`;
-    let id = map.get(key);
+    const gx = Math.round(positions[i] * GRID);
+    const gy = Math.round(positions[i + 1] * GRID);
+    const gz = Math.round(positions[i + 2] * GRID);
+
+    let id;
+    outer:
+    for (let dx = -1; dx <= 1 && id === undefined; dx++) {
+      for (let dy = -1; dy <= 1 && id === undefined; dy++) {
+        for (let dz = -1; dz <= 1; dz++) {
+          const hit = map.get(`${gx + dx},${gy + dy},${gz + dz}`);
+          if (hit !== undefined) { id = hit; break outer; }
+        }
+      }
+    }
     if (id === undefined) {
       id = verts.length / 3;
-      map.set(key, id);
+      map.set(`${gx},${gy},${gz}`, id);
       verts.push(positions[i], positions[i + 1], positions[i + 2]);
     }
     indices[i / 3] = id;
   }
   return {positions: new Float32Array(verts), indices};
 }
+
 
 /** Manifold -> binary STL blob. */
 export function exportSTL(man) {

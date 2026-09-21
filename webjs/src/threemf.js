@@ -107,8 +107,14 @@ const RELS = `<?xml version="1.0" encoding="UTF-8"?>
  <Relationship Target="/3D/3dmodel.model" Id="rel-1" Type="http://schemas.microsoft.com/3dmanufacturing/2013/01/3dmodel"/>
 </Relationships>`;
 
-const esc = (s) => String(s).replace(/[&<>"']/g, (c) => (
-    {'&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&apos;'}[c]));
+// XML 1.0 forbids the C0 control characters outright -- they are illegal even
+// written as character references, so they have to be dropped rather than
+// escaped. Tab, LF and CR are the three that are allowed. A filename may
+// legally contain the others on POSIX, and it reaches here as the model title.
+const esc = (s) => String(s)
+    .replace(/[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]/g, '')
+    .replace(/[&<>"']/g, (c) => (
+        {'&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&apos;'}[c]));
 
 /**
  * objects: [{name, parts:[{name, mesh, extruder}], pos:[x, y]}]
