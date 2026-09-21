@@ -9,6 +9,21 @@ export const TILE = 28.50;    // printed tile outer size
 export const SAFE_DEPTH = 1.60;
 export const EPS = 0.05;
 
+// Tile bases, mapped to their cached render. Built by
+// bases/tilegen_bases.scad; see the repo README for why the vendored
+// tile_base.scad's own crosshatch cannot simply be parameterised.
+export const BASES = {
+  blank: 'tile_base.stl',
+  grid: 'tile_base_grid.stl',
+  cross: 'tile_base_cross.stl',
+  horizontal: 'tile_base_horizontal.stl',
+  frame: 'tile_base_frame.stl',
+};
+
+// Bases whose face is not solid: artwork over an opening has no material to
+// carve, so it does not print there.
+export const OPEN_FACE = new Set(['grid', 'cross', 'horizontal', 'frame']);
+
 let M = null;   // the manifold-3d module, once loaded
 
 export async function initManifold() {
@@ -102,14 +117,45 @@ export function toWorld(section, mirror) {
   return section.scale([mirror ? 1 : -1, -1]);
 }
 
+/**
+ * The material actually present at the decorated face, in view space.
+ *
+ * Slicing the base just above z=0 is the only honest way to draw the face: a
+ * blank tile is a full square, the striped and frame bases are not, and
+ * drawing a square for them previews a tile that will never be printed.
+ *
+ * Returned in VIEW space: the section is tile XY, and the face is seen from
+ * -z where (u, v) = (-x, -y), the same 180 deg mapping toWorld applies in
+ * reverse.
+ */
+export function faceOutline(base, z = 0.02) {
+  try {
+    const sec = base.slice(z);
+    if (sec.isEmpty()) { sec.delete(); return null; }
+    const flipped = sec.scale([-1, -1]);
+    sec.delete();
+    return flipped;
+  } catch {
+    return null;
+  }
+}
+
 /** This tile's share of the artwork, in tile-local view mm. */
-export function clipToTile(slots, col, row, opts) {
+export function clipToTile(slots, col, row, opts, outline = null) {
   const {cols, rows, pitch, face, margin} = opts;
   const {CrossSection} = manifold();
   const uc = (col - (cols - 1) / 2) * pitch;
   const vc = (row - (rows - 1) / 2) * pitch;
   const half = face / 2 - margin;
-  const cell = CrossSection.square([half * 2, half * 2], true);
+  let cell = CrossSection.square([half * 2, half * 2], true);
+  if (outline) {
+    // Ink only exists where the base has material. Intersecting here rather
+    // than after extrusion keeps the 2D and the 3D telling the same story,
+    // and keeps the preview honest for open-faced bases.
+    const clipped = CrossSection.intersection(cell, outline);
+    cell.delete();
+    cell = clipped;
+  }
 
   const out = [];
   for (const s of slots) {

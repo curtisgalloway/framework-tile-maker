@@ -5,8 +5,9 @@ import {loadSVG} from './svgload.js';
 import {parseSTL, exportSTL} from './stl.js';
 import {write3MF} from './threemf.js';
 import {
-  EPS, PITCH, SAFE_DEPTH, TILE, buildTile, clipToTile, fitTransform,
-  initManifold, manifold, regionToCrossSection, toWorld,
+  BASES, EPS, OPEN_FACE, PITCH, SAFE_DEPTH, TILE, buildTile, clipToTile,
+  faceOutline, fitTransform, initManifold, manifold, regionToCrossSection,
+  toWorld,
 } from './pipeline.js';
 
 const $ = (id) => document.getElementById(id);
@@ -17,7 +18,7 @@ const log = (msg, cls = '') => {
   $('log').appendChild(el);
 };
 
-let baseManifold = null;
+const baseCache = new Map();
 let svgText = null;
 let lastFiles = [];
 let busy = false;
@@ -79,13 +80,17 @@ function progress(frac, text) {
   $('phase').textContent = text;
 }
 
-async function loadBase() {
-  const res = await fetch('../assets/tile_base.stl');
-  if (!res.ok) throw new Error(`tile_base.stl: HTTP ${res.status}`);
+async function loadBase(name) {
+  if (baseCache.has(name)) return baseCache.get(name);
+  const file = BASES[name];
+  if (!file) throw new Error(`unknown base '${name}'`);
+  const res = await fetch(`../assets/${file}`);
+  if (!res.ok) throw new Error(`${file}: HTTP ${res.status}`);
   const {positions, indices} = parseSTL(await res.arrayBuffer());
   const {Manifold, Mesh} = manifold();
-  const mesh = new Mesh({numProp: 3, vertProperties: positions, triVerts: indices});
-  const man = new Manifold(mesh);
+  const man = new Manifold(
+      new Mesh({numProp: 3, vertProperties: positions, triVerts: indices}));
+  baseCache.set(name, man);
   return man;
 }
 
@@ -106,6 +111,7 @@ function opts() {
     keepEmpty: $('keepEmpty').checked,
     embed: $('embed').checked,
     filamentType: $('filamentType').value,
+    base: $('base').value,
   };
 }
 
@@ -127,11 +133,10 @@ async function generate() {
 
   try {
     if (!svgText) throw new Error('pick an SVG first');
-    if (!baseManifold) {
-      progress(0.02, 'loading tile base\u2026');
-      await paintTick();
-      baseManifold = await loadBase();
-    }
+    progress(0.02, 'loading tile base\u2026');
+    await paintTick();
+    const baseManifold = await loadBase(o.base);
+    const outline = faceOutline(baseManifold);
 
     // The canvas size is known before parsing, so the SVG can be sampled at
     // a tolerance that means 0.02 mm on the finished tile rather than 0.02 of
@@ -144,7 +149,12 @@ async function generate() {
     const regions = loadSVG(svgText, {tolMm: o.tolMm, canvasMm});
     if (!regions.length) throw new Error('no filled artwork found in that file');
     log(`svg: ${regions.length} color region(s) -> ${o.cols}x${o.rows} tile(s), ` +
-        `${o.depth} mm deep`);
+        `${o.depth} mm deep, ${o.base} base`);
+    if (OPEN_FACE.has(o.base)) {
+      log(`  ! the ${o.base} base has an open face. Artwork over an opening ` +
+          `has no material to carve, so it does not print there, and what ` +
+          `remains is split into one fragment per opening.`, 'warn');
+    }
     if (o.depth > SAFE_DEPTH) {
       log(`  ! depth ${o.depth} mm is past the ${SAFE_DEPTH} mm solid zone; ` +
           `the pocket may break into the hook cut-outs`, 'warn');
@@ -160,12 +170,15 @@ async function generate() {
     // After this point regions get clipped per tile and any tile may see only
     // a subset; numbering per tile makes one color print as different
     // filaments on different tiles.
+    //
+    // Slots stay in VIEW space and toWorld is applied per tile after
+    // clipping, matching tilegen.py. Clipping in world space happens to agree
+    // on a single centred tile, because the cell is symmetric about its own
+    // centre, but the cell offsets are view-space quantities -- and the face
+    // outline is view space too, so mixing them would be wrong.
     const slots = sections.map((section, i) => ({
-      section: toWorld(section, o.mirror),
-      slot: i,
-      hexColor: regions[i].hex,
+      section, slot: i, hexColor: regions[i].hex,
     }));
-    sections.forEach((s) => s.delete());
 
     const objects = [];
     const gap = o.face + 4.0;
@@ -182,7 +195,7 @@ async function generate() {
         await paintTick();
         done++;
         const tag = (o.cols === 1 && o.rows === 1) ? 'tile' : `tile_r${r}c${c}`;
-        const inks = clipToTile(slots, c, r, o);
+        const inks = clipToTile(slots, c, r, o, outline);
         const px = 128 + (c - (o.cols - 1) / 2) * gap;
         const py = 128 - (r - (o.rows - 1) / 2) * gap;
 
@@ -199,7 +212,10 @@ async function generate() {
           continue;
         }
 
-        const {body, parts} = buildTile(baseManifold, inks, o.depth);
+        const worldInks = inks.map((ink) => ({
+          ...ink, section: toWorld(ink.section, o.mirror),
+        }));
+        const {body, parts} = buildTile(baseManifold, worldInks, o.depth);
         log(`  + ${tag}: body ${body.volume().toFixed(1)} mm3, ` +
             `${parts.length} ink part(s)`);
         const plist = [{name: 'body', mesh: body, extruder: 1}];
@@ -208,6 +224,7 @@ async function generate() {
                       extruder: p.slot + 2});
         }
         objects.push({name: tag, pos: [px, py], parts: plist});
+        worldInks.forEach((i) => i.section.delete());
         inks.forEach((i) => i.section.delete());
         made++;
       }
@@ -243,7 +260,7 @@ async function generate() {
     }
     progress(1, 'done');
 
-    drawPreview(slots, o);
+    drawPreview(slots, o, outline);
     $('count').textContent = skipped
         ? `${made} of ${made + skipped} tiles — ${skipped} cell(s) had no ` +
           `artwork and were left out. Tick "blank tile for every empty cell".`
@@ -349,7 +366,33 @@ function displayColor(rgb, target = 3.0) {
 }
 
 /** Canvas preview: the panel as seen from outside, artwork in view space. */
-function drawPreview(slots, o) {
+/** Artwork as it will actually appear: inside the tiles, on real material. */
+function clipPreview(section, o, outline) {
+  const {CrossSection} = manifold();
+  const half = o.face / 2 - o.margin;
+  const cells = [];
+  for (let r = 0; r < o.rows; r++) {
+    for (let c = 0; c < o.cols; c++) {
+      const uc = (c - (o.cols - 1) / 2) * PITCH;
+      const vc = (r - (o.rows - 1) / 2) * PITCH;
+      let cell = CrossSection.square([half * 2, half * 2], true).translate([uc, vc]);
+      if (outline) {
+        const m = outline.translate([uc, vc]);
+        const k = CrossSection.intersection(cell, m);
+        cell.delete(); m.delete();
+        cell = k;
+      }
+      cells.push(cell);
+    }
+  }
+  const mask = CrossSection.union(cells);
+  cells.forEach((c) => c.delete());
+  const out = CrossSection.intersection(section, mask);
+  mask.delete();
+  return out;
+}
+
+function drawPreview(slots, o, outline = null) {
   const cv = $('preview');
   const W = o.cols * PITCH, H = o.rows * PITCH;
   const px = Math.min(920 / W, 620 / H) * (window.devicePixelRatio || 1);
@@ -366,27 +409,45 @@ function drawPreview(slots, o) {
   g.translate(cv.width / 2, cv.height / 2);
   g.scale(px, px);
 
+  // Draw the face the base really has, so an opening reads as an opening
+  // rather than as tile material.
+  const rings = outline ? outline.toPolygons() : null;
   for (let r = 0; r < o.rows; r++) {
     for (let c = 0; c < o.cols; c++) {
       const uc = (c - (o.cols - 1) / 2) * PITCH;
       const vc = (r - (o.rows - 1) / 2) * PITCH;
-      g.fillStyle = '#3c3c40';
       g.strokeStyle = '#0a0a0c';
       g.lineWidth = 0.15;
-      g.fillRect(uc - o.face / 2, vc - o.face / 2, o.face, o.face);
+      if (!rings) {
+        g.fillStyle = '#3c3c40';
+        g.fillRect(uc - o.face / 2, vc - o.face / 2, o.face, o.face);
+      } else {
+        g.fillStyle = '#0a0a0c';
+        g.fillRect(uc - o.face / 2, vc - o.face / 2, o.face, o.face);
+        g.fillStyle = '#3c3c40';
+        g.beginPath();
+        for (const ring of rings) {
+          ring.forEach(([x, y], i) => {
+            if (i === 0) g.moveTo(x + uc, y + vc);
+            else g.lineTo(x + uc, y + vc);
+          });
+          g.closePath();
+        }
+        g.fill('evenodd');
+      }
       g.strokeRect(uc - o.face / 2, vc - o.face / 2, o.face, o.face);
     }
   }
 
+  // Slots are already view space, and so is the outline, so this draws what
+  // a viewer outside the case sees with no further mapping.
   for (const s of slots) {
     const rgb = [1, 3, 5].map((i) => parseInt(s.hexColor.substr(i, 2), 16));
     g.fillStyle = 'rgb(' + displayColor(rgb).join(',') + ')';
     g.beginPath();
-    for (const ring of s.section.toPolygons()) {
-      // undo toWorld's (u,v) -> (-u,-v) so the preview matches the source
+    for (const ring of clipPreview(s.section, o, outline).toPolygons()) {
       ring.forEach(([x, y], i) => {
-        const u = -x, v = -y;
-        if (i === 0) g.moveTo(u, v); else g.lineTo(u, v);
+        if (i === 0) g.moveTo(x, y); else g.lineTo(x, y);
       });
       g.closePath();
     }
@@ -405,6 +466,9 @@ $('embed').addEventListener('change', () => {
 });
 $('setBody').addEventListener('change', () => {
   $('bodyopts').hidden = !$('setBody').checked;
+});
+$('base').addEventListener('change', () => {
+  $('basehint').hidden = $('base').value === 'blank';
 });
 $('fullpanel').addEventListener('click', () => {
   $('cols').value = 3; $('rows').value = 7;
