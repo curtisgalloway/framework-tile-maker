@@ -1,5 +1,7 @@
 # tilegen
 
+[![tests](https://github.com/curtisgalloway/framework-tile-maker/actions/workflows/tests.yml/badge.svg)](https://github.com/curtisgalloway/framework-tile-maker/actions/workflows/tests.yml)
+
 Turn any SVG or image into Framework Desktop front-panel tiles, as multi-color
 parts ready to slice. One tile or all 21, with artwork split across the grid.
 
@@ -69,6 +71,9 @@ python3 tilegen.py artwork.png --grid 3x7 --fit cover --keep-empty
 python3 selftest.py              # 54 checks on the reference implementation
 python3 webjs/tests/run.py       # 48 differential checks in headless Chrome
 ```
+
+Both run in CI on every push, along with a check that
+`webjs/tests/expected.json` still matches what `tilegen.py` produces.
 
 ---
 

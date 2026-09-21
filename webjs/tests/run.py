@@ -159,6 +159,11 @@ def main(argv=None):
     ap.add_argument("--headed", action="store_true",
                     help="run in a visible browser instead of headless")
     ap.add_argument("--timeout", type=float, default=300.0)
+    ap.add_argument("--no-sandbox", action="store_true",
+                    default=bool(os.environ.get("CI")),
+                    help="pass --no-sandbox to Chrome (default on when CI is "
+                         "set; the sandbox needs kernel features many CI "
+                         "containers do not grant)")
     a = ap.parse_args(argv)
 
     exp_path = HERE / "expected.json"
@@ -190,6 +195,8 @@ def main(argv=None):
     if not a.headed:
         cmd.insert(1, "--headless=new")
         cmd.insert(2, "--disable-gpu")
+    if a.no_sandbox:
+        cmd.insert(1, "--no-sandbox")
 
     proc = subprocess.Popen(cmd, stdout=subprocess.DEVNULL,
                             stderr=subprocess.DEVNULL)
@@ -211,7 +218,8 @@ def main(argv=None):
 
     if not results:
         print("no results: the browser never reported back "
-              f"(waited {a.timeout:.0f}s). Try --headed to watch it.")
+              f"(waited {a.timeout:.0f}s). Try --headed to watch it, or "
+              f"--no-sandbox if this is a container.")
         return 2
 
     rep = results[0]
