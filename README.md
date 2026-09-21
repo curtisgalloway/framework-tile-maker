@@ -10,8 +10,8 @@ parts ready to slice. One tile or all 21, with artwork split across the grid.
 **Open it in a browser. There is nothing to install.**
 
 ```bash
-git clone --recurse-submodules <this repo>
-cd tilegen
+git clone --recurse-submodules https://github.com/curtisgalloway/framework-tile-maker.git
+cd framework-tile-maker
 python3 -m http.server 8790        # any static file server will do
 ```
 
