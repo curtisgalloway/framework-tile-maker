@@ -274,10 +274,11 @@ async function generate() {
         }));
         for (const ink of inks) keptArea += ink.section.area();
 
-        const {body, parts} = buildTile(baseManifold, worldInks, o.depth);
-        // body is a fresh mesh EXCEPT when there is no ink, where buildTile
-        // returns the cached base unchanged -- owning that would free it.
-        if (body !== baseManifold) own(body);
+        const {body, parts, bodyIsBase} = buildTile(baseManifold, worldInks,
+                                                    o.depth);
+        // bodyIsBase means buildTile handed back the cached base unchanged;
+        // owning it would free the cache out from under the next run.
+        if (!bodyIsBase) own(body);
         parts.forEach((pp) => own(pp.solid));
         log(`  + ${tag}: body ${body.volume().toFixed(1)} mm3, ` +
             `${parts.length} ink part(s)`);

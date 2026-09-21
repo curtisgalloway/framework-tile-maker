@@ -108,8 +108,17 @@ export function fitTransform(sections, opts) {
     const b = all.bounds();
     const cx = (b.min[0] + b.max[0]) / 2, cy = (b.min[1] + b.max[1]) / 2;
     all.delete();
-    secs = secs.map((s) => s.translate([-cx, -cy]).rotate(rotate)
-                              .translate([cx, cy]));
+    // Chaining orphans each intermediate: translate() and rotate() each
+    // return a NEW CrossSection, and only the last handle is kept. Dead code
+    // today (every caller pins rotate: 0) but wrong the moment it is used.
+    secs = secs.map((sec) => {
+      const a = sec.translate([-cx, -cy]);
+      const b2 = a.rotate(rotate);
+      a.delete();
+      const c = b2.translate([cx, cy]);
+      b2.delete();
+      return c;
+    });
   }
 
   const all = CrossSection.union(secs);
@@ -135,13 +144,20 @@ export function fitTransform(sections, opts) {
   sx *= scalePct / 100; sy *= scalePct / 100;
 
   const cx = (b.min[0] + b.max[0]) / 2, cy = (b.min[1] + b.max[1]) / 2;
-  const out = secs.map((s) => {
-    let g = s.translate([-cx, -cy]).scale([sx, sy]);
+  const out = secs.map((sec) => {
+    // Every step returns a NEW CrossSection and WASM memory is not garbage
+    // collected, so each intermediate has to be freed explicitly. Written as
+    // a chain this leaked two per colour region on every single run.
+    const moved = sec.translate([-cx, -cy]);
+    let g = moved.scale([sx, sy]);
+    moved.delete();
     if (tolMm > 0) {
       // Simplify in millimeters, not artwork units: flattening fine enough
       // for a 512-unit viewBox is thousands of times finer than a printer
       // resolves, and every extra point becomes triangles.
-      g = g.simplify(tolMm);
+      const simplified = g.simplify(tolMm);
+      g.delete();
+      g = simplified;
     }
     return g;
   });
@@ -177,7 +193,14 @@ export function faceOutline(base, z = 0.02) {
     const flipped = sec.scale([-1, -1]);
     sec.delete();
     return flipped;
-  } catch {
+  } catch (err) {
+    // A silent null is indistinguishable from "this base has no face
+    // material", and the caller then clips ink to the bare cell instead. The
+    // printed body is unaffected (buildTile re-clips in 3D), but the preview,
+    // the thin-feature warnings and the crop bookkeeping all quietly degrade,
+    // which is the opposite of what this function is for.
+    console.warn('faceOutline failed; preview and warnings will be ' +
+                 'approximate for this base:', err);
     return null;
   }
 }
@@ -224,13 +247,21 @@ export function clipToTile(slots, col, row, opts, outline = null) {
  */
 export function buildTile(base, inks, depth) {
   const {Manifold} = manifold();
-  if (!inks.length) return {body: base, parts: []};
+  // NOTE: `body` here IS the caller's base, not a fresh mesh -- the only
+  // return path where that is true. bodyIsBase says so explicitly, because a
+  // caller that follows the obvious contract and deletes `body` would free
+  // the caller's own (cached) base.
+  if (!inks.length) return {body: base, parts: [], bodyIsBase: true};
 
-  const cutters = inks.map((ink) => ({
-    slot: ink.slot,
-    hexColor: ink.hexColor,
-    solid: ink.section.extrude(depth + EPS).translate([0, 0, -EPS]),
-  }));
+  const cutters = inks.map((ink) => {
+    // extrude() and translate() each return a new Manifold; chaining dropped
+    // the extrude result on the floor -- one full mesh per ink per tile, so
+    // ~63 leaked meshes for a three-colour 3x7 panel.
+    const raw = ink.section.extrude(depth + EPS);
+    const solid = raw.translate([0, 0, -EPS]);
+    raw.delete();
+    return {slot: ink.slot, hexColor: ink.hexColor, solid};
+  });
 
   const all = cutters.length === 1
       ? cutters[0].solid
@@ -244,5 +275,5 @@ export function buildTile(base, inks, depth) {
     solid: Manifold.intersection(base, c.solid),
   }));
   for (const c of cutters) c.solid.delete();
-  return {body, parts};
+  return {body, parts, bodyIsBase: false};
 }
