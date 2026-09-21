@@ -275,6 +275,12 @@ literally the same code. Measured on the same inputs:
 | 3 × 7 panel, all 20 carved tiles | — | match to 0.1 mm³ |
 | a photo, body | 1958.5 mm³ | 1953.1 mm³ (0.28% apart) |
 | a photo, wall clock | 2.3 s | 0.5 s |
+| thin-feature warnings | yes | yes (percentages differ, see below) |
+
+The thin-feature warnings fire in both, on the same tiles, but the reported
+percentages differ by a few points: shapely offsets through GEOS and the
+browser through Clipper2. `webjs/README.md` has the measurements and why they
+are not tuned to match.
 
 SVG agrees to five decimal places, because both sides do the same arithmetic.
 Photos differ by a fraction of a percent because the tracers differ — OpenCV's

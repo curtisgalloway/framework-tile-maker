@@ -63,12 +63,23 @@ inheritance, and `getCTM` bakes in nested transforms.
 - **Zip** (`threemf.js`). `CompressionStream('deflate-raw')` is exactly what a
   zip entry wants, so this is a CRC table and a few headers, no library.
 
+## Warnings
+
+The thin-feature and crop warnings are ported. They tell you a logo will not
+survive the nozzle before you print it, which is the whole point of them.
+
+The reported PERCENTAGES differ from the CLI's by a few points and are not
+tuned to match. shapely offsets through GEOS, this goes through Clipper2, and
+the miter limit dominates the difference: on the example logo at an
+exaggerated 2 mm nozzle, ink loss reads 25.8% at miter limit 2 and 13.1% at
+100, against the CLI's 17%. Fitting a limit to match on one input would be
+wrong on the next. Both use the same parameter shapely defaults to (5.0), and
+at realistic nozzle sizes they agree on the thing that matters -- whether to
+warn at all. On a 3x7 panel at 0.4 mm both emit exactly one warning.
+
 ## Not ported
 
 - `--rotate`, `--bleed`, `--scale`, `--invert`, `--plate-origin`.
-- `feature_report`'s thin-feature warnings and the crop report. These are the
-  most valuable of the gaps: they are what tells you a logo will not survive
-  a 0.4 mm nozzle before you print it.
 - `--rebuild-base`, which needs OpenSCAD and so is inherently a CLI job.
 - `selftest.py`. The Python remains the reference and the browser is measured
   against it by hand, which is not the same as running the same assertions

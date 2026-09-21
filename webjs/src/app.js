@@ -3,6 +3,7 @@
 
 import {loadSVG} from './svgload.js';
 import {loadRaster} from './raster.js';
+import {cropReport, featureReport} from './report.js';
 import {parseSTL, exportSTL} from './stl.js';
 import {write3MF} from './threemf.js';
 import {
@@ -114,6 +115,7 @@ function opts() {
     embed: $('embed').checked,
     filamentType: $('filamentType').value,
     base: $('base').value,
+    nozzle: +$('nozzle').value,
     colors: +$('colors').value,
     background: $('background').value,
   };
@@ -200,6 +202,22 @@ async function generate() {
       section, slot: i, hexColor: regions[i].hex,
     }));
 
+    // Bookkeeping for the crop report: how much artwork was placed, how much
+    // fell outside the usable canvas, and how much survived into tiles. The
+    // difference between the last two is what the seams ate.
+    const {CrossSection} = manifold();
+    const canvasBox = CrossSection.square(
+        [(o.cols - 1) * o.pitch + o.face - 2 * o.margin,
+         (o.rows - 1) * o.pitch + o.face - 2 * o.margin], true);
+    let placedArea = 0, outsideArea = 0, keptArea = 0;
+    for (const sl of slots) {
+      placedArea += sl.section.area();
+      const out = CrossSection.difference(sl.section, canvasBox);
+      outsideArea += out.area();
+      out.delete();
+    }
+    canvasBox.delete();
+
     const objects = [];
     const gap = o.face + 4.0;
     let made = 0, skipped = 0;
@@ -235,9 +253,18 @@ async function generate() {
         const worldInks = inks.map((ink) => ({
           ...ink, section: toWorld(ink.section, o.mirror),
         }));
+        for (const ink of inks) keptArea += ink.section.area();
+
         const {body, parts} = buildTile(baseManifold, worldInks, o.depth);
         log(`  + ${tag}: body ${body.volume().toFixed(1)} mm3, ` +
             `${parts.length} ink part(s)`);
+
+        // Thin-feature warnings, on the view-space ink for this tile.
+        const merged = CrossSection.union(inks.map((i) => i.section));
+        for (const msg of featureReport(merged, o.face, o.margin, o.nozzle)) {
+          log(`      ! ${msg}`, 'warn');
+        }
+        merged.delete();
         const plist = [{name: 'body', mesh: body, extruder: 1}];
         for (const p of parts) {
           plist.push({name: `ink_${p.slot + 1}_${p.hexColor}`, mesh: p.solid,
@@ -262,6 +289,10 @@ async function generate() {
                      .replace(/\.(svg|png|jpe?g|webp)$/i, '')
                      .replace(/\s+/g, '_');
     const name = made === 1 ? `${stem}.3mf` : `${stem}_${o.cols}x${o.rows}.3mf`;
+    for (const m of cropReport(placedArea, outsideArea, keptArea, o)) {
+      log(`  ${m.level === 'warn' ? '!' : '.'} ${m.text}`, m.level);
+    }
+
     progress(0.87, 'writing the 3MF\u2026');
     await paintTick();
     const blob = await write3MF(objects, {title: stem, filaments});
