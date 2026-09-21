@@ -39,16 +39,23 @@ export function thinReport(section, w) {
       const a = p.area();
       if (a <= 1e-9) continue;
       total += a;
-      const eroded = p.offset(-w / 2, 'Miter', MITER_LIMIT);
-      const opened = eroded.offset(w / 2, 'Miter', MITER_LIMIT);
-      if (opened.isEmpty()) {
-        lost += a;
-        vanished++;
-      } else {
-        lost += Math.max(0, a - opened.area());
+      // eroded/opened are WASM allocations, so the deletes have to be
+      // unconditional. Leaving them at the end of the iteration leaked both
+      // whenever isEmpty() or area() threw -- measured at exactly 2 per throw.
+      let eroded = null, opened = null;
+      try {
+        eroded = p.offset(-w / 2, 'Miter', MITER_LIMIT);
+        opened = eroded.offset(w / 2, 'Miter', MITER_LIMIT);
+        if (opened.isEmpty()) {
+          lost += a;
+          vanished++;
+        } else {
+          lost += Math.max(0, a - opened.area());
+        }
+      } finally {
+        if (eroded) eroded.delete();
+        if (opened) opened.delete();
       }
-      eroded.delete();
-      opened.delete();
     }
   } finally {
     parts.forEach((p) => p.delete());
@@ -77,11 +84,17 @@ export function featureReport(ink, face, margin, nozzle) {
   }
 
   const half = face / 2 - margin;
-  const cell = CrossSection.square([half * 2, half * 2], true);
-  const gaps = CrossSection.difference(cell, ink);
-  cell.delete();
-  const b = thinReport(gaps, nozzle);
-  gaps.delete();
+  // Same reasoning: thinReport can throw, and an unguarded gaps.delete()
+  // after it leaks the whole gap geometry when it does.
+  let cell = null, gaps = null, b;
+  try {
+    cell = CrossSection.square([half * 2, half * 2], true);
+    gaps = CrossSection.difference(cell, ink);
+    b = thinReport(gaps, nozzle);
+  } finally {
+    if (cell) cell.delete();
+    if (gaps) gaps.delete();
+  }
   if (b.total > 0 && b.lost / b.total > 0.02) {
     msgs.push(`${(b.lost / b.total * 100).toFixed(0)}% of the body-color gaps ` +
               `are thinner than ${nozzle} mm and will close up`);

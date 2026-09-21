@@ -134,6 +134,15 @@ async function generate() {
   setBusy(true);
   progress(0, 'reading artwork…');
   const t0 = performance.now();
+  // Every WASM object this run allocates, so `finally` can free them whether
+  // the run finishes or throws. Manifold memory is not garbage collected, and
+  // all the cleanup used to sit on the success path: one throw in write3MF
+  // abandoned every tile mesh built up to that point.
+  //
+  // The cached tile base is deliberately NOT in here -- it is reused across
+  // runs, so deleting it would be a use-after-free on the next Generate.
+  const owned = [];
+  const own = (x) => { if (x) owned.push(x); return x; };
   // Paint the busy state before the thread disappears into geometry.
   await yieldToPaint();
 
@@ -141,8 +150,8 @@ async function generate() {
     if (!artFile) throw new Error('pick a file first');
     progress(0.02, 'loading tile base\u2026');
     await paintTick();
-    const baseManifold = await loadBase(o.base);
-    const outline = faceOutline(baseManifold);
+    const baseManifold = await loadBase(o.base);   // cached, not owned
+    const outline = own(faceOutline(baseManifold));
 
     // The canvas size is known before parsing, so the SVG can be sampled at
     // a tolerance that means 0.02 mm on the finished tile rather than 0.02 of
@@ -184,9 +193,19 @@ async function generate() {
 
     progress(0.14, 'fitting artwork to the grid\u2026');
     await paintTick();
-    let secs = resolveOverlaps(regions.map(regionToCrossSection));
+    const resolved = resolveOverlaps(regions.map(regionToCrossSection));
+    // A region wholly covered by a later one is dropped, so this list can be
+    // shorter than `regions`. Everything downstream must index through
+    // `kept`, never by position, or colours attach to the wrong geometry.
+    const liveRegions = resolved.kept.map((k) => regions[k]);
+    if (liveRegions.length < regions.length) {
+      log(`  ${regions.length - liveRegions.length} color region(s) fully ` +
+          `covered by later artwork and dropped`);
+    }
+    let secs = resolved.sections;
     const {sections} = fitTransform(secs, o);
     secs.forEach((s) => s.delete());
+    sections.forEach(own);
 
     // Pin each color to a filament slot now, while the full set is in hand.
     // After this point regions get clipped per tile and any tile may see only
@@ -199,7 +218,7 @@ async function generate() {
     // centre, but the cell offsets are view-space quantities -- and the face
     // outline is view space too, so mixing them would be wrong.
     const slots = sections.map((section, i) => ({
-      section, slot: i, hexColor: regions[i].hex,
+      section, slot: i, hexColor: liveRegions[i].hex,
     }));
 
     // Bookkeeping for the crop report: how much artwork was placed, how much
@@ -256,6 +275,10 @@ async function generate() {
         for (const ink of inks) keptArea += ink.section.area();
 
         const {body, parts} = buildTile(baseManifold, worldInks, o.depth);
+        // body is a fresh mesh EXCEPT when there is no ink, where buildTile
+        // returns the cached base unchanged -- owning that would free it.
+        if (body !== baseManifold) own(body);
+        parts.forEach((pp) => own(pp.solid));
         log(`  + ${tag}: body ${body.volume().toFixed(1)} mm3, ` +
             `${parts.length} ink part(s)`);
 
@@ -281,8 +304,12 @@ async function generate() {
     let filaments = null;
     if (o.embed) {
       const bodyColor = $('setBody').checked ? $('bodyColor').value : '';
+      // Indexed by filament slot, and a part's extruder is slot + 2, so this
+      // must follow the SURVIVING regions -- building it from the full list
+      // would offset every colour after a dropped region.
       filaments = [{color: bodyColor, type: o.filamentType}].concat(
-          regions.map((r) => ({color: r.hex.toUpperCase(), type: o.filamentType})));
+          liveRegions.map((r) => ({color: r.hex.toUpperCase(),
+                                   type: o.filamentType})));
     }
 
     const stem = (artFile?.name || 'tilegen')
@@ -319,11 +346,16 @@ async function generate() {
         : `${made} tile${made > 1 ? 's' : ''}`;
     $('count').className = skipped ? 'count bad' : 'count';
     log(`done in ${((performance.now() - t0) / 1000).toFixed(1)} s`);
-    slots.forEach((s) => s.section.delete());
   } catch (err) {
     log(String(err && err.message || err), 'bad');
     console.error(err);
   } finally {
+    // Unconditional: this is the only place WASM memory is released, so it
+    // must run on the throwing path too.
+    for (const x of owned) {
+      try { x.delete(); } catch { /* already freed or torn down */ }
+    }
+    owned.length = 0;
     setBusy(false);
   }
 }
@@ -497,12 +529,14 @@ function drawPreview(slots, o, outline = null) {
     const rgb = [1, 3, 5].map((i) => parseInt(s.hexColor.substr(i, 2), 16));
     g.fillStyle = 'rgb(' + displayColor(rgb).join(',') + ')';
     g.beginPath();
-    for (const ring of clipPreview(s.section, o, outline).toPolygons()) {
+    const shown = clipPreview(s.section, o, outline);
+    for (const ring of shown.toPolygons()) {
       ring.forEach(([x, y], i) => {
         if (i === 0) g.moveTo(x, y); else g.lineTo(x, y);
       });
       g.closePath();
     }
+    shown.delete();
     g.fill('evenodd');
   }
   g.restore();

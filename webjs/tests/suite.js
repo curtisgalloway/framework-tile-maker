@@ -56,11 +56,16 @@ async function generate({baseName = 'blank', cols = 1, rows = 1, margin = 2.5,
   const base = await loadBase(baseName);
   const opts = {cols, rows, pitch: PITCH, face: TILE, margin, bleed: 0, fit,
                 rotate: 0, scalePct: 100, tolMm: 0.02};
-  const secs = resolveOverlaps(regions.map(regionToCrossSection));
+  const resolved = resolveOverlaps(regions.map(regionToCrossSection));
+  const secs = resolved.sections;
+  // Colors must follow the SURVIVING regions: a region fully covered by a
+  // later one drops out here, and indexing `regions` by position after that
+  // attaches each color to the next region's geometry.
+  const liveRegions = resolved.kept.map((k) => regions[k]);
   const {sections: fitted} = fitTransform(secs, opts);
   secs.forEach((s) => s.delete());
   const slots = fitted.map((section, i) => ({section, slot: i,
-                                             hexColor: regions[i].hex}));
+                                             hexColor: liveRegions[i].hex}));
   const outline = faceOutline(base);
   const tiles = {};
   for (let r = 0; r < rows; r++) {
@@ -200,6 +205,34 @@ export async function run() {
           new Set(used).size === used.length, `slots ${JSON.stringify(used)}`);
     check('no color lands on slot -1 or duplicates slot 0',
           used.every((s) => s >= 0), JSON.stringify(used));
+  }
+
+  // ---------------------------------------------------------------- 5b
+  section('5b. a fully covered region does not shift the colors');
+  {
+    // resolveOverlaps drops a region wholly covered by a later one, which
+    // SHORTENS the section list. Indexing regions[] by position after that
+    // attaches every later color to the wrong geometry, and the embedded
+    // filament palette offsets with it -- so the slicer is told to load the
+    // wrong filament. Caught by external review; this pins it.
+    const hidden = {
+      rgb: [255, 0, 0], hex: '#ff0000', fillRule: 'EvenOdd', order: 0,
+      contours: [[[10, 10], [40, 10], [40, 40], [10, 40]]],
+    };
+    const covering = {
+      rgb: [0, 0, 255], hex: '#0000ff', fillRule: 'EvenOdd', order: 1,
+      contours: [[[0, 0], [50, 0], [50, 50], [0, 50]]],   // swallows `hidden`
+    };
+    const {CrossSection} = manifold();
+    const r = resolveOverlaps([hidden, covering].map(regionToCrossSection));
+    check('the covered region is dropped', r.sections.length === 1,
+          `${r.sections.length} of 2 survive`);
+    check('kept names which region survived', r.kept.length === 1 && r.kept[0] === 1,
+          `kept = ${JSON.stringify(r.kept)}`);
+    const live = r.kept.map((k) => [hidden, covering][k]);
+    check('the survivor keeps ITS OWN color, not the dropped one\'s',
+          live[0].hex === '#0000ff', `${live[0].hex} (wrong answer: #ff0000)`);
+    r.sections.forEach((x) => x.delete());
   }
 
   // ---------------------------------------------------------------- 6

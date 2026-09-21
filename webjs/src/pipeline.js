@@ -57,11 +57,14 @@ export function regionToCrossSection(region) {
  * the 3MF, and body + ink stops reconstructing the base -- measured +2.22 mm3
  * on the test fixture, which is how this was caught.
  *
- * Takes and returns CrossSections; inputs are consumed.
+ * Takes CrossSections and consumes them. Returns {sections, kept}, where
+ * kept[i] is the index in the INPUT array that sections[i] came from --
+ * required because a fully covered region drops out and shortens the result.
  */
 export function resolveOverlaps(sections) {
   const {CrossSection} = manifold();
   const out = [];
+  const kept = [];
   for (let i = 0; i < sections.length; i++) {
     const later = sections.slice(i + 1);
     let g = sections[i];
@@ -72,10 +75,18 @@ export function resolveOverlaps(sections) {
       g.delete();
       g = cut;
     }
-    if (!g.isEmpty()) out.push(g);
-    else g.delete();
+    // A region completely covered by a later one drops out here, which
+    // SHORTENS the array. `kept` records which original region each survivor
+    // came from: without it the caller's regions[i] lookup silently shifts
+    // and every colour after the drop is attached to the wrong geometry.
+    if (!g.isEmpty()) {
+      out.push(g);
+      kept.push(i);
+    } else {
+      g.delete();
+    }
   }
-  return out;
+  return {sections: out, kept};
 }
 
 /**
