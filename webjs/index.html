@@ -1,0 +1,160 @@
+<!doctype html>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>tilegen</title>
+<style>
+  :root {
+    --bg:#141416; --panel:#1c1c20; --line:#2c2c33; --ink:#e8e8ea;
+    --dim:#9a9aa4; --accent:#7aa2f7; --warn:#e0af68; --bad:#f7768e;
+  }
+  * { box-sizing: border-box; }
+  body { margin:0; background:var(--bg); color:var(--ink);
+         font:14px/1.5 ui-sans-serif,-apple-system,"Segoe UI",sans-serif; }
+  header { padding:18px 20px; border-bottom:1px solid var(--line); }
+  h1 { font-size:17px; margin:0 0 4px; }
+  #status { color:var(--dim); font-size:12.5px; }
+  #status.bad { color:var(--bad); }
+  main { display:grid; grid-template-columns:320px 1fr; gap:20px; padding:20px;
+         align-items:start; max-width:1400px; }
+  @media (max-width:860px){ main{ grid-template-columns:1fr; } }
+  .card { background:var(--panel); border:1px solid var(--line);
+          border-radius:10px; padding:16px; }
+  label { display:block; margin:0 0 12px; }
+  label > span { display:block; color:var(--dim); font-size:12px; margin-bottom:4px; }
+  input,select { width:100%; background:#101014; color:var(--ink);
+                 border:1px solid var(--line); border-radius:6px;
+                 padding:7px 9px; font:inherit; }
+  .row { display:grid; grid-template-columns:1fr 1fr; gap:10px; }
+  .check-wide { display:flex; align-items:center; gap:6px; margin:0 0 6px; }
+  .check-wide input { width:auto; }
+  .hint { color:var(--dim); font-size:12px; margin:-2px 0 12px; }
+  .link { width:auto; display:inline; background:none; border:0; padding:0;
+          color:var(--accent); font:inherit; font-size:12px; cursor:pointer;
+          text-decoration:underline; }
+  button { width:100%; padding:10px; border:0; border-radius:7px;
+           background:var(--accent); color:#0d1017; font:600 14px/1 inherit;
+           cursor:pointer; display:flex; align-items:center;
+           justify-content:center; gap:8px; }
+  button:disabled { opacity:.7; cursor:progress; }
+  /* transform-only animation, so it keeps turning on the compositor even
+     while the main thread is busy meshing */
+  .spinner { width:13px; height:13px; border-radius:50%; flex:0 0 auto;
+             border:2px solid rgba(13,16,23,.35); border-top-color:#0d1017;
+             animation:spin .7s linear infinite; }
+  @keyframes spin { to { transform:rotate(360deg); } }
+  #progress { margin:12px 0 0; }
+  #bar { height:6px; background:#101014; border:1px solid var(--line);
+         border-radius:99px; overflow:hidden; }
+  #fill { height:100%; width:0%; background:var(--accent);
+          transition:width .15s linear; }
+  #phase { color:var(--dim); font-size:12px; margin:6px 0 0; }
+  .swatch { display:flex; gap:6px; align-items:center; }
+  .swatch input[type=color] { width:34px; height:34px; padding:2px; flex:0 0 auto; }
+  canvas { display:block; margin:0 auto; border-radius:8px; max-width:100%; }
+  pre,#log { background:#101014; border:1px solid var(--line); border-radius:8px;
+             padding:12px; font:12.5px/1.5 ui-monospace,Menlo,monospace;
+             white-space:pre-wrap; margin:0; }
+  .warn { color:var(--warn); } .bad { color:var(--bad); }
+  h2 { font-size:13px; color:var(--dim); margin:18px 0 8px; }
+  .count { font-size:13px; color:var(--dim); margin:14px 0 0; }
+  .count.bad { color:var(--warn); }
+  .files { display:flex; flex-wrap:wrap; gap:8px; margin-top:10px; }
+  .files a { color:var(--ink); text-decoration:none; font-size:12.5px;
+             border:1px solid var(--line); border-radius:6px; padding:6px 10px;
+             background:#101014; }
+  .files a.main { border-color:var(--accent); color:var(--accent); font-weight:600; }
+  details summary { cursor:pointer; color:var(--dim); font-size:13px; margin-top:12px; }
+  [hidden] { display:none !important; }
+</style>
+
+<header>
+  <h1>tilegen</h1>
+  <div id="status">loading manifold…</div>
+</header>
+
+<main>
+  <div class="card">
+    <label><span>Artwork — SVG, PNG, JPG or WEBP</span>
+      <input type="file" id="file"
+             accept=".svg,.png,.jpg,.jpeg,.webp,image/*"></label>
+
+    <div id="rasteropts" hidden>
+      <div class="row">
+        <label><span>Colors</span>
+          <input id="colors" type="number" min="2" max="8" value="2"></label>
+        <label><span>Background</span>
+          <input id="background" value="auto"></label>
+      </div>
+      <p class="hint">Images only. <code>auto</code> drops the color around the
+        border so the bare tile shows through and you save a filament;
+        <code>none</code> prints it.</p>
+    </div>
+
+    <div class="row">
+      <label><span>Columns</span><input id="cols" type="number" min="1" max="99" value="1"></label>
+      <label><span>Rows</span><input id="rows" type="number" min="1" max="99" value="1"></label>
+    </div>
+    <p class="hint">The full panel is 3 × 7.
+      <button type="button" class="link" id="fullpanel">use it</button></p>
+
+    <div class="row">
+      <label><span>Margin (mm)</span><input id="margin" type="number" step="0.1" value="2.5"></label>
+      <label><span>Depth (mm)</span><input id="depth" type="number" step="0.1" value="0.6"></label>
+    </div>
+    <div class="row">
+      <label><span>Fit</span>
+        <select id="fit"><option>contain</option><option>cover</option><option>stretch</option></select></label>
+      <label><span>Tile base</span>
+        <select id="base">
+          <option value="blank">blank (solid face)</option>
+          <option value="horizontal">horizontal stripes</option>
+          <option value="cross">diagonal stripes</option>
+          <option value="grid">grid</option>
+          <option value="frame">frame only</option>
+        </select></label>
+    </div>
+    <p class="hint" id="basehint" hidden>Open-faced base: artwork over an
+      opening has nothing to carve, so it does not print there. The preview
+      shows exactly what survives.</p>
+
+    <label class="check-wide"><input type="checkbox" id="mirror"> mirror</label>
+    <label class="check-wide"><input type="checkbox" id="keepEmpty" checked>
+      blank tile for every empty cell</label>
+
+    <label class="check-wide"><input type="checkbox" id="embed">
+      set filament colors in the 3MF</label>
+    <div id="filopts" hidden>
+      <label><span>Filament type</span>
+        <select id="filamentType">
+          <option>PLA</option><option>PETG</option><option>ABS</option>
+          <option>ASA</option><option>TPU</option><option>PC</option>
+        </select></label>
+      <label class="check-wide"><input type="checkbox" id="setBody">
+        also set the body color (filament 1)</label>
+      <div id="bodyopts" hidden>
+        <label><span>Body color</span>
+          <span class="swatch">
+            <input type="color" id="bodyColor" value="#3c3c40">
+          </span></label>
+      </div>
+    </div>
+
+    <button id="go" disabled><span id="golabel">Generate</span></button>
+    <div id="progress" hidden>
+      <div id="bar"><div id="fill"></div></div>
+      <p id="phase"></p>
+    </div>
+  </div>
+
+  <section>
+    <div class="card">
+      <canvas id="preview" hidden></canvas>
+      <p class="count" id="count"></p>
+      <div class="files" id="files"></div>
+    </div>
+    <h2>Console</h2>
+    <div id="log"></div>
+  </section>
+</main>
+
+<script type="module" src="./src/app.js?v=8"></script>

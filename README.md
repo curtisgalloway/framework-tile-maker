@@ -7,19 +7,23 @@ parts ready to slice. One tile or all 21, with artwork split across the grid.
 
 ## Do this first
 
+**Open it in a browser. There is nothing to install.**
+
 ```bash
-git submodule update --init      # fetches the tile base from upstream
-pip install numpy trimesh manifold3d shapely svgelements opencv-python-headless pillow matplotlib
-python3 tilegen.py fuchsia.svg --margin 2.5
+git clone --recurse-submodules <this repo>
+cd tilegen
+python3 -m http.server 8790        # any static file server will do
 ```
 
-Cloning fresh? Use `git clone --recurse-submodules` and skip the first line.
-Prefer a GUI? See **Web interface** below.
+Then open <http://127.0.0.1:8790/webjs/>, drop in an SVG or a photo, and hit
+**Generate**. You get the panel preview and a `.3mf` to open in Bambu Studio.
 
-That writes `out/fuchsia.3mf`. Open it in Bambu Studio, set filament 1 to the
-tile color and filament 2 to the logo color, slice. Nothing else to configure.
+Nothing is uploaded and nothing is installed: the page fetches the tile base
+from `assets/`, pulls Manifold's geometry kernel as WebAssembly, and does the
+rest in the tab. A single tile takes about two seconds.
 
-Takes about 5 seconds. A full 21-tile panel takes about 4 seconds.
+> **Prefer the command line?** `tilegen.py` does everything the page does and a
+> few things it does not. See [Command line](#command-line) below.
 
 ---
 
@@ -67,21 +71,29 @@ python3 selftest.py     # 20 regression checks, ~20 s
 
 ---
 
-## Web interface
+## Command line
 
-A local page for driving the tool when you want to see the panel before you
-commit to it. Same engine, same flags — it shells out to `tilegen.py` and shows
-you the command it ran, so anything you land on can be reproduced in a shell.
+`tilegen.py` is the original implementation and remains the reference: it is
+what `selftest.py`'s 54 checks exercise, and what the browser version is
+measured against.
 
 ```bash
-pip install -r requirements-web.txt
-python3 webui.py
+pip install -r requirements.txt
+python3 tilegen.py logo.svg --margin 2.5
 ```
 
-Then open <http://127.0.0.1:8770>. Pick a file, set columns and rows, hit
-**Generate**: you get the panel preview, the `.3mf` to download, the individual
-part STLs behind a fold, and tilegen's console output including its
-thin-feature and crop warnings.
+It has a few things the page does not: `--rotate`, `--bleed`, `--scale`,
+`--invert`, thin-feature and crop warnings, `--plate-origin`, and
+`--rebuild-base`.
+
+There is also `webui.py`, a local page that shells out to the CLI. It predates
+the browser version and exists for driving the CLI's extra flags through a
+form; for ordinary use prefer `/webjs/`, which needs no Python at all.
+
+```bash
+pip install -r requirements.txt -r requirements-web.txt
+python3 webui.py        # http://127.0.0.1:8770
+```
 
 - **`--port N`** if 8770 is taken. It checks the port first and tells you what
   to do rather than binding somewhere you are not expecting.
@@ -248,6 +260,27 @@ his file is never copied here, and the table above says exactly which artifacts
 inherit which terms. `NOTICE.md` records the same thing in one place.
 
 ---
+
+## How the browser version compares
+
+Both implementations share the geometry kernel: `manifold3d` in Python and
+`manifold-3d` on npm are the same C++ project, so the mesh booleans are
+literally the same code. Measured on the same inputs:
+
+| | Python | Browser |
+|---|---|---|
+| `fuchsia.svg`, 1 tile, body | 1849.1714 mm³ | 1849.1506 mm³ |
+| body + ink vs base | +0.000018 mm³ | +0.000018 mm³ |
+| `--base grid`, body | 1595.8 mm³ | 1595.8 mm³ |
+| 3 × 7 panel, all 20 carved tiles | — | match to 0.1 mm³ |
+| a photo, body | 1958.5 mm³ | 1953.1 mm³ (0.28% apart) |
+| a photo, wall clock | 2.3 s | 0.5 s |
+
+SVG agrees to five decimal places, because both sides do the same arithmetic.
+Photos differ by a fraction of a percent because the tracers differ — OpenCV's
+`findContours` against marching squares — which is two tools disagreeing about
+where a soft edge sits, not one being wrong, and it is far below what a 0.4 mm
+nozzle resolves.
 
 ## The preview shows the real surface
 
