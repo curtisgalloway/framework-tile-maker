@@ -66,7 +66,8 @@ python3 tilegen.py artwork.png --grid 3x7 --fit cover --keep-empty
 `--credits` prints attribution. `--help` lists everything.
 
 ```bash
-python3 selftest.py     # 20 regression checks, ~20 s
+python3 selftest.py              # 54 checks on the reference implementation
+python3 webjs/tests/run.py       # 48 differential checks in headless Chrome
 ```
 
 ---

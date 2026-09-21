@@ -48,6 +48,37 @@ export function regionToCrossSection(region) {
 }
 
 /**
+ * Painter's algorithm: later artwork wins where regions overlap.
+ *
+ * Not optional. Quantized raster regions are disjoint by pixel, but each
+ * region's contours are traced independently and marching squares puts the
+ * isoline on the half-pixel boundary, so neighbours both claim the boundary
+ * strip. Without this the overlap is extruded twice: the parts intersect in
+ * the 3MF, and body + ink stops reconstructing the base -- measured +2.22 mm3
+ * on the test fixture, which is how this was caught.
+ *
+ * Takes and returns CrossSections; inputs are consumed.
+ */
+export function resolveOverlaps(sections) {
+  const {CrossSection} = manifold();
+  const out = [];
+  for (let i = 0; i < sections.length; i++) {
+    const later = sections.slice(i + 1);
+    let g = sections[i];
+    if (later.length) {
+      const u = CrossSection.union(later);
+      const cut = CrossSection.difference(g, u);
+      u.delete();
+      g.delete();
+      g = cut;
+    }
+    if (!g.isEmpty()) out.push(g);
+    else g.delete();
+  }
+  return out;
+}
+
+/**
  * Scale artwork into view-space millimeters, origin at panel center.
  *
  * The canvas is NOT cols*pitch. Outer tiles contribute only their face and

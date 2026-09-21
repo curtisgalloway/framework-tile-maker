@@ -9,7 +9,7 @@ import {write3MF} from './threemf.js';
 import {
   BASES, EPS, OPEN_FACE, PITCH, SAFE_DEPTH, TILE, buildTile, clipToTile,
   faceOutline, fitTransform, initManifold, manifold, regionToCrossSection,
-  toWorld,
+  resolveOverlaps, toWorld,
 } from './pipeline.js';
 
 const $ = (id) => document.getElementById(id);
@@ -184,7 +184,7 @@ async function generate() {
 
     progress(0.14, 'fitting artwork to the grid\u2026');
     await paintTick();
-    let secs = regions.map(regionToCrossSection);
+    let secs = resolveOverlaps(regions.map(regionToCrossSection));
     const {sections} = fitTransform(secs, o);
     secs.forEach((s) => s.delete());
 

@@ -81,12 +81,12 @@ warn at all. On a 3x7 panel at 0.4 mm both emit exactly one warning.
 
 - `--rotate`, `--bleed`, `--scale`, `--invert`, `--plate-origin`.
 - `--rebuild-base`, which needs OpenSCAD and so is inherently a CLI job.
-- `selftest.py`. The Python remains the reference and the browser is measured
-  against it by hand, which is not the same as running the same assertions
-  here. **This is the most important gap**: two implementations of the 3MF
-  extruder logic is exactly where drift hides, and a per-tile filament index
-  silently printed three colors as one filament in the Python for an unknown
-  length of time before a test caught it.
 
-The honest state: the browser version is the default because it is easier to
-run and produces the same geometry, not because it is better tested.
+## Tests
+
+`python3 webjs/tests/run.py` runs 48 differential checks in headless Chrome
+against numbers derived from `tilegen.py`. See `webjs/tests/README.md`.
+
+It earned its place on the first run by catching a real bug: `resolveOverlaps`
+had never been ported, so quantized raster regions overlapped on their shared
+boundary and were extruded twice.

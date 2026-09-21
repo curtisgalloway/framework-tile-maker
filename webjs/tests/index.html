@@ -1,0 +1,74 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>tilegen browser tests</title>
+<style>
+  :root { --bg:#141416; --ink:#e8e8ea; --dim:#9a9aa4; --ok:#9ece6a;
+          --bad:#f7768e; --line:#2c2c33; }
+  body { margin:0; padding:20px; background:var(--bg); color:var(--ink);
+         font:13px/1.55 ui-monospace,Menlo,monospace; }
+  h1 { font:600 15px/1.4 ui-sans-serif,system-ui,sans-serif; margin:0 0 4px; }
+  #sub { color:var(--dim); margin-bottom:16px; font-family:ui-sans-serif,sans-serif; }
+  h2 { font-size:13px; color:var(--dim); margin:18px 0 6px; font-weight:600; }
+  .pass { color:var(--ok); } .fail { color:var(--bad); }
+  .detail { color:var(--dim); }
+  #summary { margin-top:20px; padding:10px 14px; border:1px solid var(--line);
+             border-radius:8px; display:inline-block; }
+</style>
+
+<h1>tilegen browser tests</h1>
+<div id="sub">Running the real modules against numbers derived from tilegen.py.</div>
+<div id="out">starting…</div>
+<div id="summary" hidden></div>
+
+<script type="module">
+import {run} from './suite.js?v=3';
+
+const out = document.getElementById('out');
+const report = new URLSearchParams(location.search).has('report');
+
+function render(sections) {
+  out.innerHTML = '';
+  let failed = 0, total = 0;
+  for (const s of sections) {
+    const h = document.createElement('h2');
+    h.textContent = s.name;
+    out.appendChild(h);
+    for (const c of s.checks) {
+      total++;
+      if (!c.ok) failed++;
+      const d = document.createElement('div');
+      d.className = c.ok ? 'pass' : 'fail';
+      d.textContent = `  ${c.ok ? 'PASS' : 'FAIL'}  ${c.name}`;
+      if (c.detail) {
+        const e = document.createElement('span');
+        e.className = 'detail';
+        e.textContent = `   ${c.detail}`;
+        d.appendChild(e);
+      }
+      out.appendChild(d);
+    }
+  }
+  const sum = document.getElementById('summary');
+  sum.hidden = false;
+  sum.className = failed ? 'fail' : 'pass';
+  sum.textContent = failed ? `${failed} of ${total} FAILED`
+                           : `all ${total} checks passed`;
+  return {failed, total};
+}
+
+try {
+  const {sections} = await run();
+  render(sections);
+  if (report) {
+    await fetch('/__results', {method: 'POST',
+                               body: JSON.stringify({sections})});
+  }
+} catch (err) {
+  // A thrown error must still reach the runner, or a crash looks like a hang.
+  out.innerHTML = `<div class="fail">FATAL: ${err && err.stack || err}</div>`;
+  if (report) {
+    await fetch('/__results', {method: 'POST', body: JSON.stringify(
+        {fatal: String(err && err.stack || err)})});
+  }
+}
+</script>
