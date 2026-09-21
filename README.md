@@ -7,9 +7,22 @@ parts ready to slice. One tile or all 21, with artwork split across the grid.
 
 ---
 
-## Do this first
+## Use it now
 
-**Open it in a browser. There is nothing to install.**
+### → **[curtisgalloway.github.io/framework-tile-maker](https://curtisgalloway.github.io/framework-tile-maker/)**
+
+Drop in an SVG or a photo, press **Generate**, download the `.3mf`, open it in
+Bambu Studio. Nothing to install, nothing to clone, and nothing is uploaded —
+the whole pipeline runs in your browser tab.
+
+[Help and options](https://curtisgalloway.github.io/framework-tile-maker/webjs/help.html)
+covers every control.
+
+---
+
+## Running it yourself
+
+Only needed if you want to modify it or work offline:
 
 ```bash
 git clone --recurse-submodules https://github.com/curtisgalloway/framework-tile-maker.git
@@ -17,12 +30,8 @@ cd framework-tile-maker
 python3 -m http.server 8790        # any static file server will do
 ```
 
-Then open <http://127.0.0.1:8790/webjs/>, drop in an SVG or a photo, and hit
-**Generate**. You get the panel preview and a `.3mf` to open in Bambu Studio.
-
-Nothing is uploaded and nothing is installed: the page fetches the tile base
-from `assets/`, pulls Manifold's geometry kernel as WebAssembly, and does the
-rest in the tab. A single tile takes about two seconds.
+Then open <http://127.0.0.1:8790/webjs/>. Cloned without
+`--recurse-submodules`? Run `git submodule update --init`.
 
 > **Prefer the command line?** `tilegen.py` does everything the page does and a
 > few things it does not. See [Command line](#command-line) below.
