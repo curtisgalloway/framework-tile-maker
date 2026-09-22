@@ -8,8 +8,8 @@ import {parseSTL, exportSTL} from './stl.js';
 import {write3MF} from './threemf.js';
 import {
   BASES, EPS, OPEN_FACE, PITCH, SAFE_DEPTH, TILE, buildTile, clipToTile,
-  faceOutline, fitTransform, initManifold, manifold, regionToCrossSection,
-  resolveOverlaps, toWorld,
+  faceOutline, fitTransform, initManifold, manifold, pickBackground,
+  resolveRegions, toWorld,
 } from './pipeline.js';
 
 const $ = (id) => document.getElementById(id);
@@ -121,6 +121,39 @@ function opts() {
   };
 }
 
+/**
+ * Which SVG color region, if any, should become the tile body.
+ *
+ * 'auto' asks the geometry: a color has to own the outside edge of the
+ * artwork to count, so a logo floating on nothing keeps every color. An
+ * explicit value names the color, matched exactly first and by nearest RGB
+ * after, because a hex typed off a design file rarely matches the rendered
+ * fill byte for byte and a silent miss reads as the setting being ignored.
+ */
+function svgBackgroundIndex(sections, regions, background) {
+  if (background === 'auto') return pickBackground(sections);
+  const want = background.trim().replace('#', '').toLowerCase();
+  if (!/^[0-9a-f]{6}$/.test(want)) {
+    log(`  ! background '${background}' is not auto, none or #rrggbb; ` +
+        `ignoring it`, 'warn');
+    return -1;
+  }
+  const exact = regions.findIndex((r) => r.hex.slice(1).toLowerCase() === want);
+  if (exact >= 0) return exact;
+  const t = [0, 2, 4].map((i) => parseInt(want.slice(i, i + 2), 16));
+  let best = -1, bestD = Infinity;
+  regions.forEach((r, i) => {
+    const d = (r.rgb[0] - t[0]) ** 2 + (r.rgb[1] - t[1]) ** 2 +
+              (r.rgb[2] - t[2]) ** 2;
+    if (d < bestD) { bestD = d; best = i; }
+  });
+  if (best >= 0) {
+    log(`  ! no color in the SVG is exactly ${background}; using the ` +
+        `nearest, ${regions[best].hex}`, 'warn');
+  }
+  return best;
+}
+
 async function generate() {
   const o = opts();
   $('log').innerHTML = '';
@@ -193,16 +226,34 @@ async function generate() {
 
     progress(0.14, 'fitting artwork to the grid\u2026');
     await paintTick();
-    const resolved = resolveOverlaps(regions.map(regionToCrossSection));
-    // A region wholly covered by a later one is dropped, so this list can be
-    // shorter than `regions`. Everything downstream must index through
-    // `kept`, never by position, or colours attach to the wrong geometry.
-    const liveRegions = resolved.kept.map((k) => regions[k]);
+    // Painted in the order the document draws them, then regrouped by color.
+    // A color wholly covered by later artwork is dropped, so this list can be
+    // shorter than `regions`; everything downstream must index through the
+    // returned regions, never by position, or colors attach to the wrong
+    // geometry.
+    const resolved = resolveRegions(regions);
+    let liveRegions = resolved.regions;
     if (liveRegions.length < regions.length) {
       log(`  ${regions.length - liveRegions.length} color region(s) fully ` +
           `covered by later artwork and dropped`);
     }
     let secs = resolved.sections;
+
+    // An SVG backdrop can be the tile body instead of inlay. The raster path
+    // already does this at quantize time; SVG could not, so a two-color logo
+    // on a full-bleed panel carved the entire face away and handed back an
+    // inlay the size of the tile.
+    if (isSVG && o.background !== 'none' && secs.length > 1) {
+      const bg = svgBackgroundIndex(secs, liveRegions, o.background);
+      if (bg >= 0) {
+        droppedBg = liveRegions[bg].hex;
+        secs[bg].delete();
+        secs = secs.filter((_, i) => i !== bg);
+        liveRegions = liveRegions.filter((_, i) => i !== bg);
+        log(`  background ${droppedBg} -> bare tile body (filament 1); ` +
+            `set background to 'none' to print it`);
+      }
+    }
     const {sections} = fitTransform(secs, o);
     secs.forEach((s) => s.delete());
     sections.forEach(own);
@@ -551,7 +602,10 @@ $('file').addEventListener('change', async (e) => {
   // because the decode depends on settings the user may still be changing.
   svgText = (f && (/\.svg$/i.test(f.name) || f.type === 'image/svg+xml'))
       ? await f.text() : null;
-  $('rasteropts').hidden = !f || svgText !== null;
+  // Background applies to both paths now; the color count is a quantizer
+  // setting and means nothing for an SVG, whose colors are already named.
+  $('artopts').hidden = !f;
+  $('coloropts').hidden = svgText !== null;
 });
 $('embed').addEventListener('change', () => {
   $('filopts').hidden = !$('embed').checked;

@@ -104,16 +104,18 @@
       <input type="file" id="file"
              accept=".svg,.png,.jpg,.jpeg,.webp,image/*"></label>
 
-    <div id="rasteropts" hidden>
+    <div id="artopts" hidden>
       <div class="row">
-        <label><span>Colors</span>
+        <label id="coloropts"><span>Colors</span>
           <input id="colors" type="number" min="2" max="8" value="2"></label>
         <label><span>Background</span>
           <input id="background" value="auto"></label>
       </div>
-      <p class="hint">Images only. <code>auto</code> drops the color around the
-        border so the bare tile shows through and you save a filament;
-        <code>none</code> prints it.</p>
+      <p class="hint"><strong>Colors</strong> is images only.
+        <strong>Background</strong> is the color the tile itself is printed in,
+        so it costs no inlay: <code>auto</code> picks the color around the
+        border, <code>#rrggbb</code> names one, <code>none</code> prints every
+        color as inlay.</p>
     </div>
 
     <div class="row">

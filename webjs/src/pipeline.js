@@ -41,10 +41,34 @@ export function manifold() {
   return M;
 }
 
-/** Region contours -> a CrossSection, with the SVG fill rule applied. */
+/**
+ * One color region -> a CrossSection.
+ *
+ * A region that carries `shapes` is built one shape at a time and unioned,
+ * because the fill rule is defined over the subpaths of a SINGLE path and
+ * never across paths. Two same-colored paths always union -- even when one
+ * sits inside the other wound the opposite way, which under one shared
+ * nonzero evaluation would cancel to a hole instead.
+ *
+ * `contours` alone is the fallback for regions that have no shapes, which is
+ * what the raster path produces: its rings come out of one marching-squares
+ * pass over one mask, so they really are a single even-odd figure.
+ */
 export function regionToCrossSection(region) {
   const {CrossSection} = manifold();
-  return new CrossSection(region.contours, region.fillRule);
+  const shapes = region.shapes;
+  if (!shapes || !shapes.length) {
+    return new CrossSection(region.contours, region.fillRule);
+  }
+  if (shapes.length === 1) {
+    return new CrossSection(shapes[0].contours,
+                            shapes[0].fillRule || region.fillRule);
+  }
+  const parts = shapes.map(
+      (sh) => new CrossSection(sh.contours, sh.fillRule || region.fillRule));
+  const u = CrossSection.union(parts);
+  parts.forEach((x) => x.delete());
+  return u;
 }
 
 /**
@@ -63,15 +87,27 @@ export function regionToCrossSection(region) {
  */
 export function resolveOverlaps(sections) {
   const {CrossSection} = manifold();
+  const n = sections.length;
   const out = [];
   const kept = [];
-  for (let i = 0; i < sections.length; i++) {
-    const later = sections.slice(i + 1);
+  // Everything painted after i, accumulated from the end. Re-unioning the
+  // tail for every i is O(n^2) boolean ops, which was invisible while the
+  // input was one entry per COLOR and is not once it is one entry per shape:
+  // a few hundred paths is a normal SVG. Built backwards it is n-1 unions
+  // total, and each one only ever adds a single section.
+  const after = new Array(n).fill(null);
+  for (let i = n - 2; i >= 0; i--) {
+    after[i] = after[i + 1]
+        ? CrossSection.union(after[i + 1], sections[i + 1])
+        // No copy() on CrossSection; a zero translate is the cheap clone.
+        // It has to be a clone: `after` is freed at the end, and aliasing an
+        // input section here would free the caller's geometry with it.
+        : sections[i + 1].translate([0, 0]);
+  }
+  for (let i = 0; i < n; i++) {
     let g = sections[i];
-    if (later.length) {
-      const u = CrossSection.union(later);
-      const cut = CrossSection.difference(g, u);
-      u.delete();
+    if (after[i]) {
+      const cut = CrossSection.difference(g, after[i]);
       g.delete();
       g = cut;
     }
@@ -86,7 +122,118 @@ export function resolveOverlaps(sections) {
       g.delete();
     }
   }
+  for (const a of after) if (a) a.delete();
   return {sections: out, kept};
+}
+
+/**
+ * Regions -> one CrossSection per surviving color, painted in document order.
+ *
+ * The painter's algorithm has to run over SHAPES, not colors. Grouping by
+ * color first and resolving those pins every shape of a color to the first
+ * place that color appears, so a backdrop and a highlight drawn in the same
+ * color become one thing that sits underneath everything else -- and a mark
+ * deliberately drawn on top of the other color is erased by it. Measured on a
+ * two-color logo: the star drawn last, in the backdrop color, vanished
+ * completely.
+ *
+ * So: flatten to shapes, resolve in paint order, then regroup what survived
+ * onto its color. Color order is unchanged (first appearance), because that
+ * is what a filament slot is assigned from.
+ *
+ * Returns {sections, regions}, index-aligned, with any color that ended up
+ * fully covered dropped from both.
+ */
+export function resolveRegions(regions) {
+  const {CrossSection} = manifold();
+  const items = [];
+  regions.forEach((region, ri) => {
+    const shapes = region.shapes && region.shapes.length
+        ? region.shapes
+        : [{contours: region.contours, fillRule: region.fillRule,
+            z: region.order}];
+    for (const sh of shapes) {
+      items.push({ri, z: sh.z ?? region.order, contours: sh.contours,
+                  fillRule: sh.fillRule || region.fillRule});
+    }
+  });
+  // Stable by construction within a color; sorting interleaves the colors
+  // back into the order the document draws them.
+  items.sort((a, b) => a.z - b.z);
+
+  const resolved = resolveOverlaps(items.map(
+      (it) => new CrossSection(it.contours, it.fillRule)));
+
+  const byColor = new Map();
+  resolved.sections.forEach((sec, i) => {
+    const ri = items[resolved.kept[i]].ri;
+    if (!byColor.has(ri)) byColor.set(ri, []);
+    byColor.get(ri).push(sec);
+  });
+
+  const sections = [];
+  const live = [];
+  for (let ri = 0; ri < regions.length; ri++) {
+    const pieces = byColor.get(ri);
+    if (!pieces) continue;
+    let g = pieces[0];
+    if (pieces.length > 1) {
+      g = CrossSection.union(pieces);
+      pieces.forEach((x) => x.delete());
+    }
+    sections.push(g);
+    live.push(regions[ri]);
+  }
+  return {sections, regions: live};
+}
+
+/**
+ * Which section, if any, is the backdrop: the one that owns the outside edge.
+ *
+ * A full-bleed backdrop is a color the tile can simply BE. Printing it as
+ * inlay instead carves the whole face away and hands back a part the size of
+ * the tile, burning a filament slot and a lot of plastic to reproduce
+ * something the body could have been all along.
+ *
+ * The test is ownership of a thin rim just inside the ARTWORK'S OWN outline,
+ * which is what "the color you see around the edge" means geometrically.
+ * Deliberately not the bounding box: a rounded triangle fills barely half of
+ * its box, all of it near one corner, so a box-frame test scores the backdrop
+ * of that logo at a fraction of the rim it plainly owns and finds nothing.
+ *
+ * The threshold is high on purpose. Artwork that merely touches the edge is
+ * not a backdrop, and a wrong guess here silently deletes a color.
+ *
+ * Returns an index into `sections`, or -1 for "nothing qualifies".
+ */
+export function pickBackground(sections, minShare = 0.75) {
+  const {CrossSection} = manifold();
+  if (sections.length < 2) return -1;      // dropping the only color = no art
+  const all = CrossSection.union(sections);
+  const b = all.bounds();
+  const w = b.max[0] - b.min[0], h = b.max[1] - b.min[1];
+  // Rim thickness as a fraction of the artwork, so it is resolution- and
+  // unit-independent: thin enough to mean "the edge", thick enough to survive
+  // the flattening tolerance.
+  const t = Math.min(w, h) * 0.02;
+  if (!(w > 0) || !(h > 0) || !(t > 0)) { all.delete(); return -1; }
+
+  const inset = all.offset(-t, 'Round');
+  const rim = CrossSection.difference(all, inset);
+  all.delete();
+  inset.delete();
+  const rimArea = rim.area();
+  let best = -1, bestShare = minShare;
+  if (rimArea > 0) {
+    sections.forEach((sec, i) => {
+      const hit = CrossSection.intersection(sec, rim);
+      const share = hit.area() / rimArea;
+      hit.delete();
+      if (share > bestShare) { bestShare = share; best = i; }
+    });
+  }
+  rim.delete();
+  return best;
 }
 
 /**
