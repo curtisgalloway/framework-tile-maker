@@ -55,6 +55,7 @@ The two reconstruct the original tile to within 2 × 10⁻⁵ mm³.
 | One image across the whole panel | click **use it** (3 × 7, margin 0, fit cover) |
 | A 2 × 2 block | columns 2, rows 2, fit contain |
 | Photo in four colours | pick a JPG, colors 4, fit cover |
+| Two-colour logo, one colour as the tile | leave background on `auto` |
 | Deeper inlay for white-on-black | depth 1.0 |
 | Every tile, even blank ones | leave **blank tile for every empty cell** ticked |
 
@@ -63,10 +64,13 @@ The two reconstruct the original tile to within 2 × 10⁻⁵ mm³.
 - `--depth 0.6` — inlay depth. 0.6 mm is 3 layers at 0.2 mm, opaque with most
   filaments. Past **1.6 mm** the pocket breaks into the retention hook cut-outs;
   the tool warns you.
-- `--background auto` — for images, the color around the border becomes the
-  bare tile body instead of a printed color. Saves a filament and all its
-  purge. `--background none` to print it anyway, or `--background '#ffffff'`
-  to name it.
+- `--background auto` — the color around the outside of the artwork becomes
+  the bare tile body instead of a printed color. Saves a filament and all its
+  purge. Works for SVGs as well as images: a two-colour logo on a full-bleed
+  backdrop prints as a tile in the backdrop colour with one inlaid colour on
+  it, rather than two inlays. `--background none` to print it anyway, or
+  `--background '#ffffff'` to name it. It never drops the only colour in the
+  artwork.
 - `--colors N` — how many colors to quantize an image to. Region 1 becomes
   filament 2, region 2 becomes filament 3, and so on.
 - `--fit contain | cover | stretch` — `contain` fits the whole artwork inside

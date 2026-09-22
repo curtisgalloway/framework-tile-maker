@@ -146,14 +146,22 @@ thinner than the nozzle. The second is the sneaky one &mdash; a logo with fine
 counters prints as a blob not because the ink is too thin but because the
 spaces between it are.</p>
 
-<h3>Images only: colors &amp; background</h3>
-<p><strong>Colors</strong> is how many colors to quantize a photo down to.
-Region&nbsp;1 becomes filament&nbsp;2, region&nbsp;2 becomes filament&nbsp;3,
-and so on.</p>
-<p><strong>Background</strong> set to <code>auto</code> makes the color around
-the border become the bare tile body instead of a printed color &mdash; saving
-a filament and all of its purge. Use <code>none</code> to print it anyway, or
-name a color like <code>#ffffff</code>.</p>
+<h3>Colors &amp; background</h3>
+<p><strong>Colors</strong> (images only) is how many colors to quantize a photo
+down to. Region&nbsp;1 becomes filament&nbsp;2, region&nbsp;2 becomes
+filament&nbsp;3, and so on.</p>
+<p><strong>Background</strong> is the color the tile itself is printed in, so
+it costs no inlay at all &mdash; saving a filament and all of its purge.
+<code>auto</code> picks the color around the outside of the artwork,
+<code>#rrggbb</code> names one, and <code>none</code> prints every color as
+inlay.</p>
+<p>It applies to SVGs too. A two-color logo on a full-bleed backdrop is the
+case it is for: leave it on <code>auto</code> and the backdrop becomes the tile,
+with only the second color carved and inlaid. Set it to <code>none</code> and
+you get a pocket the size of the whole tile plus an insert to fill it.</p>
+<p><code>auto</code> only ever picks a color that owns the outside edge of the
+artwork, and it never drops the only color there is, so a logo floating on
+nothing keeps everything it has.</p>
 
 <h3>Blank tile for every empty cell</h3>
 <p>On by default. Ask for 3&nbsp;&times;&nbsp;7 and you get 21 tiles, including

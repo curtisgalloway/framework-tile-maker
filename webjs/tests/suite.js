@@ -15,7 +15,8 @@ import {write3MF} from '../src/threemf.js';
 import {featureReport} from '../src/report.js';
 import {
   BASES, PITCH, TILE, buildTile, clipToTile, faceOutline, fitTransform,
-  initManifold, manifold, regionToCrossSection, resolveOverlaps, toWorld,
+  initManifold, manifold, pickBackground, regionToCrossSection,
+  resolveOverlaps, resolveRegions, toWorld,
 } from '../src/pipeline.js';
 
 const sections = [];
@@ -56,12 +57,12 @@ async function generate({baseName = 'blank', cols = 1, rows = 1, margin = 2.5,
   const base = await loadBase(baseName);
   const opts = {cols, rows, pitch: PITCH, face: TILE, margin, bleed: 0, fit,
                 rotate: 0, scalePct: 100, tolMm: 0.02};
-  const resolved = resolveOverlaps(regions.map(regionToCrossSection));
+  const resolved = resolveRegions(regions);
   const secs = resolved.sections;
   // Colors must follow the SURVIVING regions: a region fully covered by a
   // later one drops out here, and indexing `regions` by position after that
   // attaches each color to the next region's geometry.
-  const liveRegions = resolved.kept.map((k) => regions[k]);
+  const liveRegions = resolved.regions;
   const {sections: fitted} = fitTransform(secs, opts);
   secs.forEach((s) => s.delete());
   const slots = fitted.map((section, i) => ({section, slot: i,
@@ -233,6 +234,68 @@ export async function run() {
     check('the survivor keeps ITS OWN color, not the dropped one\'s',
           live[0].hex === '#0000ff', `${live[0].hex} (wrong answer: #ff0000)`);
     r.sections.forEach((x) => x.delete());
+  }
+
+  // ---------------------------------------------------------------- 5d
+  section('5d. two-color SVG: paint order and per-path fill rules');
+  {
+    // Both halves of a real failure on a two-color logo, pinned separately.
+    //
+    // (a) The mark is drawn in the BACKDROP color, on top of the accent.
+    // Bucketing every shape of a color onto that color's first appearance
+    // sank it under the accent, and the painter's pass then erased it: the
+    // star vanished from the tile entirely.
+    //
+    // (b) The accent star sits inside an accent swoosh, wound the other way.
+    // The fill rule is defined over the subpaths of ONE path and never across
+    // paths -- two same-colored paths always union -- so pouring both into a
+    // single nonzero evaluation cancelled the star into a hole.
+    const svg = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100">
+      <path fill="#001122" d="M0 0 H100 V100 H0 Z"/>
+      <path fill="#3388ff" d="M10 10 H90 V90 H10 Z"/>
+      <path fill="#001122" d="M40 40 H60 V60 H40 Z"/>
+      <path fill="#3388ff" d="M45 55 H55 V45 H45 Z"/>
+    </svg>`;
+    const regions = loadSVG(svg, {tolMm: 0.02, canvasMm: 100});
+    check('one region per color, not per path', regions.length === 2,
+          JSON.stringify(regions.map((r) => r.hex)));
+    check('each drawn shape is kept separately',
+          regions[0].shapes.length === 2 && regions[1].shapes.length === 2,
+          `${regions[0].shapes.length} and ${regions[1].shapes.length}`);
+
+    const {sections: got, regions: live} = resolveRegions(regions);
+    const area = Object.fromEntries(live.map((r, i) => [r.hex, got[i].area()]));
+    got.forEach((x) => x.delete());
+
+    // Backdrop = the 100x100 outer with the accent cut out (3600), plus what
+    // is left of the 20x20 mark once the star lands on top of it (300).
+    // Bucketing by color instead gives 3700: the mark sinks under the accent
+    // and only its own union with the outer square survives.
+    near('the mark drawn last in the backdrop color survives',
+         area['#001122'], 3900, 1, 'units2');
+    // Accent = the 80x80 with the mark cut out (6000), plus the 10x10 star
+    // drawn back on top of it (100). One shared nonzero evaluation gives
+    // 6300 -- the star cancels into a hole and takes the mark's cut with it.
+    near('the counter-wound star unions instead of cancelling',
+         area['#3388ff'], 6100, 1, 'units2');
+
+    // And the backdrop is exactly what the tile body can be printed in.
+    const {sections: s2, regions: live2} = resolveRegions(regions);
+    const bg = pickBackground(s2);
+    check('the backdrop is offered as the tile body',
+          bg >= 0 && live2[bg].hex === '#001122',
+          bg >= 0 ? live2[bg].hex : 'nothing picked');
+    s2.forEach((x) => x.delete());
+
+    // A single color is never the background: dropping it leaves no artwork.
+    const one = loadSVG(
+        '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 10 10">' +
+        '<path fill="#001122" d="M0 0 H10 V10 H0 Z"/></svg>',
+        {tolMm: 0.02, canvasMm: 10});
+    const solo = resolveRegions(one);
+    check('a one-color SVG keeps its only color',
+          pickBackground(solo.sections) === -1);
+    solo.sections.forEach((x) => x.delete());
   }
 
   // ---------------------------------------------------------------- 5c

@@ -212,11 +212,18 @@ export function hex(rgb) {
 }
 
 /**
- * Parse SVG source into regions: [{rgb, hex, contours, fillRule, order}].
+ * Parse SVG source into regions, one per fill color, in first-seen order:
  *
- * contours are rings of [x, y] in the SVG's own user units, y down.
- * Regions are grouped by fill color, in first-seen order, exactly as
- * tilegen.py's load_svg does, so the filament slot order matches.
+ *   [{rgb, hex, fillRule, order, contours, shapes}]
+ *
+ * `shapes` is the geometry that means anything: one {contours, fillRule, z}
+ * per drawn element, `z` being its index in the document's paint order.
+ * `contours` is every ring of the color in one flat list, kept only for
+ * callers that want a cheap bounding box -- it cannot express a per-path fill
+ * rule and it cannot express paint order, which is exactly what `shapes` is
+ * for.
+ *
+ * Rings are [x, y] in the SVG's own user units, y down.
  */
 /**
  * Pick a sampling tolerance in SVG user units that lands near `tolMm` on the
@@ -284,6 +291,13 @@ export function loadSVG(text, {tolMm = 0.02, canvasMm = 0, fillRule = null} = {}
 
     const buckets = new Map();
     let order = 0;
+    // Position in the document's paint order, counted over SHAPES, not
+    // colors. Colors are still what a filament slot is assigned to, but the
+    // painter's algorithm has to run over the individual shapes: a color that
+    // appears early and again late (a dark backdrop, then a dark star on top
+    // of the light artwork) is two different things to a renderer, and
+    // collapsing them onto the first appearance loses the second one.
+    let paintIndex = 0;
 
     const drawable = [];
     for (const el of svg.querySelectorAll(
@@ -352,16 +366,23 @@ export function loadSVG(text, {tolMm = 0.02, canvasMm = 0, fillRule = null} = {}
 
       const key = rgb.join(',');
       if (!buckets.has(key)) {
-        buckets.set(key, {rgb, hex: hex(rgb), contours: [], fillRule: rule,
-                          order: order++});
+        buckets.set(key, {rgb, hex: hex(rgb), contours: [], shapes: [],
+                          fillRule: rule, order: order++});
       }
       const b = buckets.get(key);
-      // A path with an even-odd rule cannot be merged into a nonzero bucket
-      // without changing what it means, so the first rule seen for a color
-      // wins and a conflict is reported rather than silently applied.
-      if (b.fillRule !== rule) {
-        console.warn(`fill-rule conflict for ${b.hex}: keeping ${b.fillRule}`);
-      }
+      // One entry per drawn element, each keeping its OWN fill rule and its
+      // own place in the paint order.
+      //
+      // The fill rule is defined over the subpaths of a single path, never
+      // across paths: two separate paths of the same color always union, even
+      // when one is inside the other and wound the opposite way. Pouring every
+      // ring of a color into one nonzero evaluation makes those two cancel --
+      // measured on a logo whose accent star sits inside an accent swoosh, and
+      // the star came out as a hole.
+      b.shapes.push({contours: rings, fillRule: rule, z: paintIndex++});
+      // Flat list kept for callers that only want "every ring of this color".
+      // It cannot express either of the rules above, so nothing that builds
+      // geometry should use it: see regionToCrossSection.
       b.contours.push(...rings);
     }
 
