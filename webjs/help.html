@@ -146,6 +146,19 @@ thinner than the nozzle. The second is the sneaky one &mdash; a logo with fine
 counters prints as a blob not because the ink is too thin but because the
 spaces between it are.</p>
 
+<h3>Min gap</h3>
+<p>Widens every body-colored gap narrower than this, by trimming the ink on
+either side of it. Gaps already this wide are left exactly as drawn, and two
+ink colors that touch never get a gap put between them. <strong>0</strong>
+turns it off.</p>
+<p>Set it to your slicer's <strong>first-layer line width</strong>, not the
+nozzle size: the artwork prints face down, so every gap is on the first layer,
+and a gap narrower than one line fills with ink from both sides. Bambu Studio's
+default for a 0.4 mm nozzle is 0.5 mm. The default here, 0.6 mm, is that plus
+some room: a logo whose curves measured 0.50&ndash;0.55 mm still sliced with
+ink specks along them. Raise it if yours still do; lower it (or set 0) if the
+artwork's fine gaps matter more than a clean first layer.</p>
+
 <h3>Colors &amp; background</h3>
 <p><strong>Colors</strong> (images only) is how many colors to quantize a photo
 down to. Region&nbsp;1 becomes filament&nbsp;2, region&nbsp;2 becomes

@@ -78,6 +78,10 @@ The two reconstruct the original tile to within 2 × 10⁻⁵ mm³.
 - `--margin` — keep-out from each tile edge. Use `0` for multi-tile artwork so
   it runs across the seams; use `2` or `3` for a single centered logo.
 - `--nozzle 0.4` — drives the thin-feature warnings.
+- `--min-gap 0.6` — widens any body-colored gap narrower than this by trimming
+  the ink beside it; wider gaps are untouched, `0` turns it off. Set it to your
+  slicer's first-layer line width plus a little: the art prints face down, so
+  every gap is on the first layer, and one narrower than a line fills with ink.
 - `--base blank|horizontal|cross|grid|frame` — which tile base to carve into.
   `blank` is the solid face and the default. The others have **open faces**:
   artwork over an opening has no material to carve, so it does not print

@@ -312,6 +312,100 @@ export function fitTransform(sections, opts) {
 }
 
 /**
+ * Widen every body-colored gap narrower than `minGap` mm, by trimming the ink
+ * on both sides of it. Gaps already at least `minGap` wide are not touched.
+ *
+ * The artwork prints face down, so the gaps land on the first layer, whose
+ * line width (0.5 mm on a Bambu 0.4 nozzle) is wider than the nozzle. A body
+ * wall narrower than one line is not laid down cleanly, and the ink lines on
+ * either side spill into it: measured on a two-color logo whose 0.4-0.5 mm
+ * curves sliced with ink specks along their length.
+ *
+ * Shrinking ALL the ink by a fixed amount cannot guarantee a minimum: any
+ * V-shaped gap narrows to zero at its point, so the amount always comes out
+ * as the maximum. Instead the gaps are sorted into width bands by morphological
+ * opening -- anything that cannot hold a `hi`-wide disc is narrower than `hi`
+ * -- and each band is dilated by just enough to reach `minGap`. A gap of width
+ * t in [lo, hi) grows to t + (minGap - lo), so the result lands in
+ * [minGap, minGap + step): even along a curve whose width wanders, instead of
+ * lumpy where one fixed dilation would have started and stopped.
+ *
+ * Only body gaps are widened. Two different ink colors touching is not a gap
+ * and must not grow a body-colored seam between them, so the gaps are taken
+ * against the union of all ink.
+ *
+ * Takes and consumes `sections` (view-space mm). Returns {sections, removed}:
+ * the trimmed sections, index-aligned with the input (a section may come back
+ * empty), and the ink area removed in mm^2.
+ */
+export function widenGaps(sections, minGap, step = 0.05) {
+  const {CrossSection} = manifold();
+  if (!(minGap > 0) || !sections.length) return {sections, removed: 0};
+  const MITER = 5.0;   // same as report.js: Round joins flag every corner
+  const NOISE = 0.02;  // mm; narrower than this is flattening error, not art
+
+  const all = CrossSection.union(sections);
+  if (all.isEmpty()) { all.delete(); return {sections, removed: 0}; }
+  const b = all.bounds();
+  // The body continues past the artwork, so the frame must too. Taking gaps
+  // against the artwork's own bounding box made the strip between an edge
+  // shape and the box look thin, and trimmed ink that was never near a gap.
+  const pad = 2 * minGap + 1;
+  const box = CrossSection.square(
+      [b.max[0] - b.min[0] + 2 * pad, b.max[1] - b.min[1] + 2 * pad], true);
+  const frame = box.translate([(b.min[0] + b.max[0]) / 2,
+                               (b.min[1] + b.max[1]) / 2]);
+  box.delete();
+  const gaps = CrossSection.difference(frame, all);
+  frame.delete();
+  all.delete();
+
+  const cuts = [];
+  try {
+    for (let lo = 0; lo < minGap - 1e-9; lo += step) {
+      const hi = Math.min(lo + step, minGap);
+      // thin(hi) holds every gap narrower than hi, the narrower bands
+      // included. Those already got a larger dilation on an earlier pass, so
+      // dilating the whole set again by the smaller amount adds nothing wrong
+      // and saves a difference per band.
+      const eroded = gaps.offset(-hi / 2, 'Miter', MITER);
+      const opened = eroded.offset(hi / 2, 'Miter', MITER);
+      eroded.delete();
+      const raw = CrossSection.difference(gaps, opened);
+      opened.delete();
+      // Opening a flattened curve is not exact: it leaves hairline residue,
+      // a few microns wide, along edges that are nowhere near thin. Dilated
+      // below, every one of those bit a round notch out of the ink, and a
+      // wide curve came back scalloped and shedding ink islands -- measured
+      // at 27 new sliver rings on a two-color logo. A second, tiny opening
+      // removes the residue and keeps every real strip wider than NOISE.
+      const shrunk = raw.offset(-NOISE / 2, 'Miter', MITER);
+      raw.delete();
+      const thin = shrunk.offset(NOISE / 2, 'Miter', MITER);
+      shrunk.delete();
+      if (thin.isEmpty() || thin.area() < 1e-8) { thin.delete(); continue; }
+      cuts.push(thin.offset((minGap - lo) / 2, 'Round'));
+      thin.delete();
+    }
+  } finally {
+    gaps.delete();
+  }
+  if (!cuts.length) return {sections, removed: 0};
+
+  const cut = cuts.length === 1 ? cuts[0] : CrossSection.union(cuts);
+  if (cuts.length > 1) cuts.forEach((c) => c.delete());
+  let removed = 0;
+  const out = sections.map((sec) => {
+    const trimmed = CrossSection.difference(sec, cut);
+    removed += Math.max(0, sec.area() - trimmed.area());
+    sec.delete();
+    return trimmed;
+  });
+  cut.delete();
+  return {sections: out, removed};
+}
+
+/**
  * View space (u right, v down) -> tile XY.
  *
  * The decorated face is at z=0 with hooks rising in +z, so it is seen from
