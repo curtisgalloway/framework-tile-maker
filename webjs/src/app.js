@@ -9,7 +9,7 @@ import {write3MF} from './threemf.js';
 import {
   BASES, EPS, OPEN_FACE, PITCH, SAFE_DEPTH, TILE, buildTile, clipToTile,
   faceOutline, fitTransform, initManifold, manifold, pickBackground,
-  resolveRegions, toWorld,
+  resolveRegions, toWorld, widenGaps,
 } from './pipeline.js';
 
 const $ = (id) => document.getElementById(id);
@@ -116,6 +116,7 @@ function opts() {
     filamentType: $('filamentType').value,
     base: $('base').value,
     nozzle: +$('nozzle').value,
+    minGap: +$('minGap').value || 0,
     colors: +$('colors').value,
     background: $('background').value,
   };
@@ -254,9 +255,17 @@ async function generate() {
             `set background to 'none' to print it`);
       }
     }
-    const {sections} = fitTransform(secs, o);
+    const fitted = fitTransform(secs, o).sections;
     secs.forEach((s) => s.delete());
+    // In millimeters, so it has to come after fitting: the same artwork has
+    // printable gaps on a 3x7 panel and unprintable ones on a single tile.
+    const widened = widenGaps(fitted, o.minGap);
+    const sections = widened.sections;
     sections.forEach(own);
+    if (widened.removed > 0) {
+      log(`  widened gaps narrower than ${o.minGap} mm: ` +
+          `${widened.removed.toFixed(2)} mm2 of ink trimmed`);
+    }
 
     // Pin each color to a filament slot now, while the full set is in hand.
     // After this point regions get clipped per tile and any tile may see only

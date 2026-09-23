@@ -148,6 +148,9 @@
     <label><span>Nozzle (mm) &mdash; drives the thin-feature warnings</span>
       <input id="nozzle" type="number" step="0.1" min="0.1" value="0.4"></label>
 
+    <label><span>Min gap (mm) &mdash; widen narrower body gaps; 0 = off</span>
+      <input id="minGap" type="number" step="0.05" min="0" value="0.6"></label>
+
     <label class="check-wide"><input type="checkbox" id="mirror"> mirror</label>
     <label class="check-wide"><input type="checkbox" id="keepEmpty" checked>
       blank tile for every empty cell</label>
@@ -188,7 +191,7 @@
   </section>
 </main>
 
-<script type="module" src="./src/app.js?v=19"></script>
+<script type="module" src="./src/app.js?v=20"></script>
 
 <footer>
   Tile base by <strong>Marcin Raczkowski (Marmot.Tech)</strong>, used

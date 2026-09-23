@@ -16,7 +16,7 @@ import {featureReport} from '../src/report.js';
 import {
   BASES, PITCH, TILE, buildTile, clipToTile, faceOutline, fitTransform,
   initManifold, manifold, pickBackground, regionToCrossSection,
-  resolveOverlaps, resolveRegions, toWorld,
+  resolveOverlaps, resolveRegions, toWorld, widenGaps,
 } from '../src/pipeline.js';
 
 const sections = [];
@@ -53,7 +53,8 @@ async function loadBase(name) {
 
 /** The app's pipeline, in one place, so the suite exercises the real path. */
 async function generate({baseName = 'blank', cols = 1, rows = 1, margin = 2.5,
-                         fit = 'contain', regions, depth = 0.6} = {}) {
+                         fit = 'contain', regions, depth = 0.6,
+                         minGap = 0} = {}) {
   const base = await loadBase(baseName);
   const opts = {cols, rows, pitch: PITCH, face: TILE, margin, bleed: 0, fit,
                 rotate: 0, scalePct: 100, tolMm: 0.02};
@@ -63,8 +64,9 @@ async function generate({baseName = 'blank', cols = 1, rows = 1, margin = 2.5,
   // later one drops out here, and indexing `regions` by position after that
   // attaches each color to the next region's geometry.
   const liveRegions = resolved.regions;
-  const {sections: fitted} = fitTransform(secs, opts);
+  const {sections: fitted0} = fitTransform(secs, opts);
   secs.forEach((s) => s.delete());
+  const fitted = widenGaps(fitted0, minGap).sections;
   const slots = fitted.map((section, i) => ({section, slot: i,
                                              hexColor: liveRegions[i].hex}));
   const outline = faceOutline(base);
@@ -493,6 +495,98 @@ export async function run() {
     check('warns about ink AND about gaps',
           loud.some((m) => m.includes('of ink')) &&
           loud.some((m) => m.includes('gaps')), JSON.stringify(loud));
+  }
+
+  // ---------------------------------------------------------------- 9
+  section('9. minimum gap width');
+  {
+    const rect = (x0, y0, x1, y1) => {
+      const sq = CrossSection.square([x1 - x0, y1 - y0], false);
+      const r = sq.translate([x0, y0]);
+      sq.delete();
+      return r;
+    };
+    const areas = (secs) => secs.map((x) => x.area());
+
+    // A 0.3 mm gap, a 2 mm gap, all one color.
+    {
+      const a = rect(0, 0, 5, 5), b = rect(5.3, 0, 10.3, 5),
+            c = rect(12.3, 0, 17.3, 5);
+      const beforeC = c.area();
+      const {sections: out, removed} = widenGaps([a, b, c], 0.5);
+      const gap = out[1].bounds().min[0] - out[0].bounds().max[0];
+      check('a 0.3 mm gap is widened to at least 0.5 mm', gap >= 0.5 - 1e-4,
+            `${gap.toFixed(4)} mm`);
+      check('... and not far past it', gap <= 0.55 + 1e-4, `${gap.toFixed(4)} mm`);
+      check('ink was trimmed', removed > 0, `${removed.toFixed(4)} mm2`);
+      // c sits 2 mm from b: nothing near it is thin.
+      near('a gap already wide enough is left exactly as drawn',
+           out[2].area(), beforeC, 1e-6, 'mm2');
+      out.forEach((x) => x.delete());
+    }
+
+    // A wedge gap narrows to a point: the band scheme must still bound it
+    // rather than trimming the whole shape.
+    {
+      const a = rect(0, 0, 10, 5);
+      const tri = new CrossSection([[[10, 0], [15, 0], [10.001, 5]]]);
+      const whole = a.area() + tri.area();
+      const {sections: out} = widenGaps([a, tri], 0.5);
+      const left = areas(out).reduce((x, y) => x + y, 0);
+      check('a V-shaped gap costs only the ink near its point',
+            left > whole * 0.9, `${(left / whole * 100).toFixed(1)}% kept`);
+      out.forEach((x) => x.delete());
+    }
+
+    // A curved gap already wider than the minimum. Opening a flattened curve
+    // leaves hairline residue at its vertices; before that was filtered out,
+    // each hair was dilated into a notch and the ink came back scalloped.
+    {
+      const disk = CrossSection.circle(5, 256);
+      const outer = CrossSection.circle(8, 256);
+      const hole = CrossSection.circle(5.52, 256);
+      const ring = CrossSection.difference(outer, hole);
+      outer.delete();
+      hole.delete();
+      const {sections: out, removed} = widenGaps([disk, ring], 0.5);
+      check('a curved gap wider than the minimum is not scalloped',
+            removed < 0.01, `${removed.toFixed(4)} mm2 removed`);
+      out.forEach((x) => x.delete());
+    }
+
+    // Two different ink colors touching is not a gap.
+    {
+      const a = rect(0, 0, 5, 5), b = rect(5, 0, 10, 5);
+      const {sections: out, removed} = widenGaps([a, b], 0.5);
+      check('touching colors get no body seam between them', removed < 1e-6,
+            `${removed.toFixed(6)} mm2 removed`);
+      out.forEach((x) => x.delete());
+    }
+
+    // Off means off: the same objects come back.
+    {
+      const a = rect(0, 0, 5, 5);
+      const {sections: out, removed} = widenGaps([a], 0);
+      check('min gap 0 changes nothing', out[0] === a && removed === 0);
+      a.delete();
+    }
+
+    // End to end on the example logo, at a min gap large enough to bite.
+    {
+      const regions = loadSVG(svgText, {tolMm: 0.02, canvasMm});
+      const want = expected.cases.svg_1x1_blank;
+      const {tiles} = await generate({regions, minGap: 1.0});
+      const got = tiles.r0c0;
+      near('with min gap on, body + ink still reconstruct the base',
+           got.body + got.inks.reduce((a, b) => a + b, 0), want.base_volume,
+           0.001);
+      check('with min gap on, the body stays watertight',
+            got.bodyMesh.status() === 'NoError' || got.bodyMesh.status() === 0,
+            String(got.bodyMesh.status()));
+      check('min gap 1.0 trims ink on the example logo',
+            got.inks[0] < want.tiles.r0c0.inks[0] - 0.01,
+            `${got.inks[0].toFixed(3)} vs ${want.tiles.r0c0.inks[0].toFixed(3)}`);
+    }
   }
 
   return {sections};
