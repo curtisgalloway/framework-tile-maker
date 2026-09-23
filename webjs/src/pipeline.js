@@ -311,6 +311,12 @@ export function fitTransform(sections, opts) {
   return {sections: out, canvas: [tw, th]};
 }
 
+// Segments per full circle for the round dilation in widenGaps. Left to
+// itself, Manifold sizes circles by edge length, which gives a 0.3 mm radius
+// about four segments; the polygon is inscribed, so the dilation falls short
+// of the width it was asked for wherever the widened gap curves.
+const ROUND_SEGMENTS = 48;
+
 /**
  * Widen every body-colored gap narrower than `minGap` mm, by trimming the ink
  * on both sides of it. Gaps already at least `minGap` wide are not touched.
@@ -326,9 +332,11 @@ export function fitTransform(sections, opts) {
  * as the maximum. Instead the gaps are sorted into width bands by morphological
  * opening -- anything that cannot hold a `hi`-wide disc is narrower than `hi`
  * -- and each band is dilated by just enough to reach `minGap`. A gap of width
- * t in [lo, hi) grows to t + (minGap - lo), so the result lands in
- * [minGap, minGap + step): even along a curve whose width wanders, instead of
- * lumpy where one fixed dilation would have started and stopped.
+ * t in [lo, hi) grows to t + (minGap - lo), so the result lands within one
+ * step of minGap: even along a curve whose width wanders, instead of lumpy
+ * where one fixed dilation would have started and stopped. (Within, not
+ * above: where a widened stretch meets a curving flank, spots a few hundredths
+ * of a mm across measure up to one step short.)
  *
  * Only body gaps are widened. Two different ink colors touching is not a gap
  * and must not grow a body-colored seam between them, so the gaps are taken
@@ -341,7 +349,7 @@ export function fitTransform(sections, opts) {
 export function widenGaps(sections, minGap, step = 0.05) {
   const {CrossSection} = manifold();
   if (!(minGap > 0) || !sections.length) return {sections, removed: 0};
-  const MITER = 5.0;   // same as report.js: Round joins flag every corner
+  const MITER = 5.0;
   const NOISE = 0.02;  // mm; narrower than this is flattening error, not art
 
   const all = CrossSection.union(sections);
@@ -368,8 +376,11 @@ export function widenGaps(sections, minGap, step = 0.05) {
       // included. Those already got a larger dilation on an earlier pass, so
       // dilating the whole set again by the smaller amount adds nothing wrong
       // and saves a difference per band.
-      const eroded = gaps.offset(-hi / 2, 'Miter', MITER);
-      const opened = eroded.offset(hi / 2, 'Miter', MITER);
+      // Round, unlike the warnings in report.js: a miter opening grows the
+      // sharp corners of the eroded gap back into a pinch, counting as wide
+      // enough a strip that is not, and that strip is then never widened.
+      const eroded = gaps.offset(-hi / 2, 'Round', 2, ROUND_SEGMENTS);
+      const opened = eroded.offset(hi / 2, 'Round', 2, ROUND_SEGMENTS);
       eroded.delete();
       const raw = CrossSection.difference(gaps, opened);
       opened.delete();
@@ -377,14 +388,25 @@ export function widenGaps(sections, minGap, step = 0.05) {
       // a few microns wide, along edges that are nowhere near thin. Dilated
       // below, every one of those bit a round notch out of the ink, and a
       // wide curve came back scalloped and shedding ink islands -- measured
-      // at 27 new sliver rings on a two-color logo. A second, tiny opening
-      // removes the residue and keeps every real strip wider than NOISE.
-      const shrunk = raw.offset(-NOISE / 2, 'Miter', MITER);
+      // at 27 new sliver rings on a two-color logo.
+      //
+      // So judge each connected piece whole: keep it if ANY part of it is
+      // wider than NOISE, drop it if it is hairline all the way through.
+      // Opening the pieces by NOISE instead also shaved the tapering tail
+      // off every real band, and a gap curving round a pinch then came out
+      // 0.50 mm wide against a 0.60 minimum.
+      const pieces = raw.decompose();
       raw.delete();
-      const thin = shrunk.offset(NOISE / 2, 'Miter', MITER);
-      shrunk.delete();
-      if (thin.isEmpty() || thin.area() < 1e-8) { thin.delete(); continue; }
-      cuts.push(thin.offset((minGap - lo) / 2, 'Round'));
+      const real = [];
+      for (const p of pieces) {
+        const core = p.offset(-NOISE / 2, 'Miter', MITER);
+        if (!core.isEmpty() && core.area() > 1e-9) real.push(p); else p.delete();
+        core.delete();
+      }
+      if (!real.length) continue;
+      const thin = real.length === 1 ? real[0] : CrossSection.union(real);
+      if (real.length > 1) real.forEach((p) => p.delete());
+      cuts.push(thin.offset((minGap - lo) / 2, 'Round', 2, ROUND_SEGMENTS));
       thin.delete();
     }
   } finally {

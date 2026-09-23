@@ -554,6 +554,31 @@ export async function run() {
       out.forEach((x) => x.delete());
     }
 
+    // Two disks 0.1 mm apart: the gap curves away from a pinch. The check is
+    // the narrowest ink-to-ink distance, by bisection on how far both sides
+    // can grow before they meet, and the promise is "within one 0.05 mm band
+    // of the minimum". Where two sharp ink corners face each other across the
+    // widened stretch, the distance is a few hundredths short of 0.6.
+    {
+      const a = CrossSection.circle(3, 256);
+      const b0 = CrossSection.circle(3, 256);
+      const b = b0.translate([6.1, 0]);
+      b0.delete();
+      const {sections: out} = widenGaps([a, b], 0.6);
+      let lo = 0, hi = 0.6;
+      for (let k = 0; k < 20; k++) {
+        const m = (lo + hi) / 2;
+        const x = out[0].offset(m / 2, 'Round', 2, 256);
+        const y = out[1].offset(m / 2, 'Round', 2, 256);
+        const z = CrossSection.intersection(x, y);
+        if (z.isEmpty() || z.area() < 1e-9) lo = m; else hi = m;
+        [x, y, z].forEach((q) => q.delete());
+      }
+      check('a gap curving away from a pinch comes within a band of the minimum',
+            lo >= 0.55, `narrowest ${lo.toFixed(3)} mm`);
+      out.forEach((x) => x.delete());
+    }
+
     // Two different ink colors touching is not a gap.
     {
       const a = rect(0, 0, 5, 5), b = rect(5, 0, 10, 5);
